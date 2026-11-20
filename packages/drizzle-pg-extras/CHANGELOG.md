@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Turning off compression on a hypertable no longer fails once chunks are compressed. The generated SQL (in a down file, or when `compression` is removed from a declaration) now decompresses every compressed chunk before it switches compression off, because TimescaleDB refuses the switch while any chunk is compressed. On a large hypertable this rewrites the data, so allow for the time and disk space.
+
 ## 0.6.0
 
 Drizzle 1.0 support, for [#6](https://github.com/Robertpaschal/drizzle-pg-extras/issues/6).
