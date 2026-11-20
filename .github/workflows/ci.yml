@@ -37,6 +37,8 @@ jobs:
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
+      # attw and publint guard the built dual-format output, so the build precedes them.
+      - run: pnpm build
       - run: pnpm exec attw --pack .
       - run: pnpm exec publint
       - if: github.event_name == 'pull_request'
