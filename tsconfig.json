@@ -12,5 +12,5 @@
     "forceConsistentCasingInFileNames": true,
     "verbatimModuleSyntax": false
   },
-  "include": ["src/**/*.ts", "tests/**/*.ts", "tsup.config.ts", "vitest.config.ts", "eslint.config.js"]
+  "include": ["src/**/*.ts", "tests/**/*.ts", "tsdown.config.ts", "vitest.config.ts", "oxlint.config.ts", "commitlint.config.ts"]
 }
