@@ -120,6 +120,8 @@ export function commentSql(comment: CommentSnapshot, text: string | null): strin
     case "extension":
       target = `EXTENSION ${quoteIdent(comment.name)}`;
       break;
+    // Exhaustive by type; this branch only catches contract violations at runtime.
+    // oxlint-disable-next-line typescript/switch-exhaustiveness-check
     default: {
       const unknown: never = comment.kind;
       throw new PgExtrasError(`unknown comment kind ${String(unknown)}`);

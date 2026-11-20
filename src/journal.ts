@@ -60,7 +60,7 @@ export function extrasSnapshotPath(out: string): string {
   return path.join(out, EXTRAS_SNAPSHOT);
 }
 
-export function readExtrasSnapshotFile(out: string): unknown | null {
+export function readExtrasSnapshotFile(out: string): unknown {
   const file = extrasSnapshotPath(out);
   if (!existsSync(file)) return null;
   return JSON.parse(readFileSync(file, "utf8")) as unknown;
