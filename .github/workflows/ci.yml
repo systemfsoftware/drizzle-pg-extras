@@ -6,6 +6,8 @@ name: CI
 on:
   push:
   pull_request:
+    # `edited` re-runs the squash-message lint when the title or body changes without a push.
+    types: [opened, synchronize, reopened, edited]
 
 permissions:
   contents: read
@@ -43,7 +45,9 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
-          printf '%s\n\n%s' "$PR_TITLE" "$PR_BODY" | pnpm exec commitlint --verbose
+          title=${PR_TITLE//$'\r'/}
+          body=${PR_BODY//$'\r'/}
+          printf '%s\n\n%s' "$title" "$body" | pnpm exec commitlint --verbose
 
   test:
     name: test (node ${{ matrix.node }}, drizzle 0.x)
@@ -63,7 +67,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U extras -d drizzle_pg_extras"
+          --health-cmd "pg_isready -h localhost -U extras -d drizzle_pg_extras"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -77,8 +81,6 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm lint
       - run: pnpm test
         env:
           POSTGRES_URL: postgres://extras:extras@localhost:5432/drizzle_pg_extras
@@ -97,7 +99,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U extras -d drizzle_pg_extras"
+          --health-cmd "pg_isready -h localhost -U extras -d drizzle_pg_extras"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -110,10 +112,9 @@ jobs:
         with:
           node-version: 24
           cache: pnpm
-      # The rc install mutates this job's own dependency tree only (KTD3); it never feeds a static check.
+      # The rc install mutates this job's own dependency tree only (KTD3); this job runs tests only,
+      # so the mutation never feeds a static check — those run once, on the frozen lockfile.
       - run: pnpm install --frozen-lockfile && pnpm add -D drizzle-orm@rc drizzle-kit@rc
-      - run: pnpm typecheck
-      - run: pnpm lint
       - run: pnpm test
         env:
           POSTGRES_URL: postgres://extras:extras@localhost:5432/drizzle_pg_extras
@@ -132,7 +133,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U extras -d drizzle_pg_extras"
+          --health-cmd "pg_isready -h localhost -U extras -d drizzle_pg_extras"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20

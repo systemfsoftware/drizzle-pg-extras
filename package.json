@@ -60,7 +60,7 @@
     "format": "dprint fmt",
     "format:check": "dprint check",
     "test": "vitest run",
-    "prepublishOnly": "npm run build"
+    "prepublishOnly": "pnpm run build"
   },
   "peerDependencies": {
     "drizzle-kit": ">=0.31.0 || >=1.0.0-0",

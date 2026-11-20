@@ -190,7 +190,7 @@ export type PgComment = {
 export type PartitionMethod = 'range' | 'list' | 'hash'
 
 /** A bound written into `FOR VALUES`. `MINVALUE` and `MAXVALUE` are range keywords, not strings. */
-export type PartitionBound = string | number | boolean | null | bigint
+export type PartitionBound = (string & {}) | number | boolean | null | bigint | 'MINVALUE' | 'MAXVALUE'
 
 export type PartitionParent = PgTable | PartitionedTable | { name: string; schema?: string }
 
