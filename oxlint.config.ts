@@ -10,10 +10,8 @@ import { defineConfig } from 'oxlint'
 const disabledWithReasons: Record<string, string> = {
   // Effect idioms: rewriting them would churn src/ and tests/ without a behavior gain
   // for this package.
-  'effecttsgo/strict-boolean-expressions':
-    'strict boolean conditions are intentional across src/ and tests/',
-  'effecttsgo/missing-pipeable-signature':
-    'the public API is builder functions, not pipeable exports',
+  'effecttsgo/strict-boolean-expressions': 'strict boolean conditions are intentional across src/ and tests/',
+  'effecttsgo/missing-pipeable-signature': 'the public API is builder functions, not pipeable exports',
   'effecttsgo/extends-native-error': 'PgExtrasError extends Error as documented API',
   'effecttsgo/global-console': 'a Node CLI library prints to the console',
   'effecttsgo/global-date': 'a Node library uses Date',
@@ -23,8 +21,7 @@ const disabledWithReasons: Record<string, string> = {
   // unchanged.
   'typescript/strict-boolean-expressions': 'boolean style is intentional',
   'typescript/consistent-type-assertions': 'assertion style matches the codebase',
-  'typescript/no-non-null-assertion':
-    'tests assert database rows after inserts; rewrites change how tests fail',
+  'typescript/no-non-null-assertion': 'tests assert database rows after inserts; rewrites change how tests fail',
   'typescript/no-unnecessary-type-assertion': 'churn on existing defensive assertions',
   'typescript/no-unnecessary-condition': 'flags existing defensive checks',
   'typescript/no-unsafe-member-access': 'typed row generics over pg results are follow-up work',
@@ -47,8 +44,7 @@ const disabledWithReasons: Record<string, string> = {
   // House test-architecture rules for @systemfsoftware/vitest and spec lanes; this
   // repository runs stock Vitest from a tests/ tree (vitest 3.x kept by ruling).
   '@systemfsoftware/test-discipline/damp-test-naming': 'existing test names stay',
-  '@systemfsoftware/test-discipline/tests-import-public-api':
-    'unit tests import src/ modules by design',
+  '@systemfsoftware/test-discipline/tests-import-public-api': 'unit tests import src/ modules by design',
   '@systemfsoftware/test-discipline/test-suffix-outside-src': 'tests live in the tests/ tree',
   '@systemfsoftware/test-discipline/vitest-from-systemfsoftware-vitest': 'stock Vitest by ruling',
   '@systemfsoftware/test-discipline/no-behaviourless-assertion': 'house assertion shape',

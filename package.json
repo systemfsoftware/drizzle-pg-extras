@@ -57,6 +57,8 @@
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "f=${OXLINT_FORMAT:-${AGENT:+agent}}; effect-tsgo oxlint . --type-aware --format=${f:-default}",
+    "format": "dprint fmt",
+    "format:check": "dprint check",
     "test": "vitest run",
     "prepublishOnly": "npm run build"
   },
@@ -78,6 +80,7 @@
     "@systemfsoftware/oxlint-config-recommended": "^8.0.3",
     "@types/node": "^22.19.1",
     "@types/pg": "^8.15.6",
+    "dprint": "^0.65.0",
     "drizzle-kit": "^0.31.11",
     "drizzle-orm": "^0.45.3",
     "effect": "^4.1.4",
