@@ -7,12 +7,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Robertpaschal/drizzle-pg-extras.git"
+    "url": "git+https://github.com/systemfsoftware/drizzle-pg-extras.git"
   },
   "bugs": {
-    "url": "https://github.com/Robertpaschal/drizzle-pg-extras/issues"
+    "url": "https://github.com/systemfsoftware/drizzle-pg-extras/issues"
   },
-  "homepage": "https://github.com/Robertpaschal/drizzle-pg-extras#readme",
+  "homepage": "https://github.com/systemfsoftware/drizzle-pg-extras#readme",
   "keywords": [
     "drizzle",
     "drizzle-orm",
