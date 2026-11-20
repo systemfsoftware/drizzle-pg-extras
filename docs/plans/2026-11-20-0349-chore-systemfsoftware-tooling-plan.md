@@ -96,9 +96,9 @@ This plan owns the tooling swap plus the SOTA baseline record. The owner's full 
 
 ### Scope Boundaries
 
-- No `src/` behavior changes; the only source diffs are mechanical dprint reformatting.
+- No `src/` behavior changes; source diffs are mechanical dprint reformatting plus oxlint fixes that are named, listed, and behavior-preserving (KTD2) — a rule whose fix cannot stay behavior-preserving is disabled with a reason instead.
 - No dependency bumps beyond tooling: drizzle-orm/drizzle-kit stay at current devDeps (0.45.x / 0.31.x; peers already allow 1.0), vitest stays 3.x, TypeScript stays 5.9 (KD9).
-- No Nix flake, no turbo/catalog/monorepo, no `bin/` tool wrappers, no `@effect/tsgo`.
+- No Nix flake, no turbo/catalog/monorepo, no `bin/` tool wrappers. The Effect toolchain (`@effect/tsgo`, `oxlint-tsgolint`, the `effect` peer) enters only as the oxlint preset's own required dependency set, not as an adopted framework (KD3, U3).
 - No publish, no visibility change, no version bump or changelog entry — the owner releases.
 - `/tmp/dpe` (rejected tsup-based edits) is ignored; nothing is revived from it.
 
@@ -143,6 +143,7 @@ None open. Q1-Q5 were answered by the conductor-relayed Gemini SOTA rulings, acc
 - TimescaleDB: docs.timescale.com (redirects to tigerdata.com/docs) continuous aggregates page (refresh, realtime since 2.13 disabled by default, hierarchical, JOIN matrix, v2.25 removes pre-2.7 cagg format); columnstore/hypercore policy functions; current release 2.32.1 (2026-11-19, gh api).
 - tsdown: Rolldown output `banner` option (rolldown.rs/reference/OutputOptions.banner); shebang-bin precedent yamada-ui#5287 ("add shebang to binary via tsdown banner").
 - SOTA rulings: conductor-relayed Gemini review, accepted by the owner 2026-11-20; recorded as KD10-KD13.
+- Gate pins verified 2026-11-20: action SHAs dereferenced from real releases via `gh api` (checkout v7.0.1 = `3d3c42e5…`, matching the house reusable workflow's pin; setup-node v7.1.0 = `949feb24…`; pnpm/action-setup v6.1.1 = `73e46992…`); oxlint preset peer set via `npm view @systemfsoftware/oxlint-config-recommended@8.0.3`; TimescaleDB image `2.32.1-pg16` digest `sha256:5d7a2f9d…` via the Docker Hub registry API.
 
 ---
 
@@ -155,14 +156,14 @@ The work ships as one PR: U1 through U6 in dependency order, U7 (metadata) indep
 ### Key Technical Decisions
 
 - KTD1. tsdown config mirrors `tsup.config.ts` 1:1: entry `index` (esm+cjs, dts, sourcemap, clean, `external: [/^drizzle-orm/]`) and entry `cli` (esm, sourcemap, shebang banner, external drizzle-orm + jiti). (session-settled: user-directed — chosen over keeping tsup: owner ruling "no tsup obviously we use tsdown"; instantiates KD1, Governs R2.) tsdown exposes Rolldown's output `banner`, used upstream for exactly this shebang case; U2 verifies the emitted banner before tsup is removed.
-- KTD2. oxlint pins to the preset's peer range `~1.93` (not latest 1.94.0), per `@systemfsoftware/oxlint-config-recommended`@8.0.3 peers (KD3). The first lint run fixes findings or disables preset rules that target Effect/cell-architecture patterns this repo does not use; each disable carries a one-line reason.
+- KTD2. oxlint pins to the preset's peer range `~1.93.0` (not latest 1.94.0), per `@systemfsoftware/oxlint-config-recommended`@8.0.3 peers (KD3). A non-mechanical finding in `src/` is fixed as a named, listed, behavior-preserving change in U3; a rule whose fix cannot stay behavior-preserving is disabled with a one-line reason — the same policy Scope Boundaries states.
 - KTD3. The drizzle 1.0-rc lane installs `drizzle-orm@rc` and `drizzle-kit@rc` with `pnpm add -D` inside the ephemeral runner; the committed lockfile is never mutated (R9). The current workflow's `npm install --no-save` line has no direct pnpm equivalent, so the install command changes shape while keeping the matrix semantics.
 - KTD4. commitlint runs in CI only, on PR squash messages, with no husky or lint-staged locally — the effect-daemon shape (R5, R8); husky + lint-staged hooks are monorepo machinery this single-package repo does not carry.
 
 ### Assumptions
 
 - tsdown 0.23 emits dts and sourcemaps for this entry shape, and the cli banner survives the swap; verified during U2 before tsup is removed.
-- The oxlint preset's dependency chain (effect, @effect/tsgo, oxlint-tsgolint) installs as devDependencies under pnpm 12 without resolution conflicts.
+- The oxlint preset's real peer set — `effect` `^4.1.4`, `@effect/tsgo` `^0.70.0`, `oxlint-tsgolint` `7.0.2007`, `typescript` `>=5.0.0` (verified via `npm view @systemfsoftware/oxlint-config-recommended@8.0.3`) — installs under pnpm 12's auto-installed peers without resolution conflicts. `@effect/tsgo` is genuinely required by the preset (peer and direct dependency), so it is not an excluded dependency — Scope Boundaries agrees.
 - The existing vitest 3 suite passes unchanged after the swap; no test files need edits.
 
 ---
@@ -193,7 +194,7 @@ The work ships as one PR: U1 through U6 in dependency order, U7 (metadata) indep
 
 - **Goal:** house lint preset (R3; KD3, KTD2).
 - **Requirements:** R3. **Dependencies:** U1.
-- **Files:** `oxlint.config.ts` (new), `eslint.config.js` (delete), `package.json` (devDeps: oxlint `~1.93`, `@systemfsoftware/oxlint-config-recommended`; `lint` script).
+- **Files:** `oxlint.config.ts` (new), `eslint.config.js` (delete), `package.json` (devDeps: `oxlint` `~1.93.0` and `@systemfsoftware/oxlint-config-recommended` `8.0.3`; `lint` script). The preset carries a fixed set with it: its own dependencies (`@systemfsoftware/oxlint-config-dmmf`, `-config-rule-authoring`, `-plugin-effect-platform`, `-plugin-test-discipline`, `-config-cell-architecture`) and its peers, which pnpm auto-installs — `oxlint-tsgolint` `7.0.2007` (the type-aware runner), `@effect/tsgo` `^0.70.0`, `effect` `^4.1.4`, and `typescript` `>=5.0.0` (already satisfied).
 - **Approach:** copy the effect-daemon-spec two-line config (`import recommended from '@systemfsoftware/oxlint-config-recommended'`, `defineConfig({ extends: [recommended] })`); script `lint` becomes `oxlint .`; resolve first-run findings per KTD2.
 - **Test expectation:** none — lint configuration; proven by exit codes.
 - **Verification:** `pnpm lint` exits 0 with the preset proven loaded — oxlint's run summary shows the house preset's active rule count, or a seeded violation the preset catches fires; `git grep -nI -e eslint -e typescript-eslint` returns nothing outside docs/plans and CHANGELOG.
@@ -221,10 +222,10 @@ The work ships as one PR: U1 through U6 in dependency order, U7 (metadata) indep
 - **Goal:** house-shaped, repo-owned workflow (R8-R10; KD5, KD7, KTD3).
 - **Requirements:** R8, R9, R10. **Dependencies:** U1-U5.
 - **Files:** `.github/workflows/ci.yml`.
-- **Approach:** keep the two service-backed test jobs (postgres 16 with the drizzle matrix, timescaledb); apply the house conventions from the reusable workflow: `permissions: contents: read`; concurrency group with `cancel-in-progress` on non-main refs; checkout pinned by commit SHA with `persist-credentials: false` and `fetch-depth: 0` — the commitlint range needs the base commits, which a shallow clone cannot reach; `pnpm/action-setup@v6` with no version input, so it reads `packageManager` from `package.json` (a version there would collide with the pin), plus `actions/setup-node@v7` with `cache: pnpm`; node matrix 22 and 24 on drizzle 0.x with a node 24 + drizzle 1.0-rc include installed per KTD3; commitlint step guarded to pull_request (`if: github.event_name == 'pull_request'`) running `pnpm exec commitlint --from "$BASE" --to "$HEAD" --verbose`. Tests keep running on PRs as today — this suite is small, and the house fast/full split exists for suite sizes this repo does not have.
+- **Approach:** keep the two service-backed test jobs (postgres 16 with the drizzle matrix, timescaledb); apply the house conventions from the reusable workflow: `permissions: contents: read`; a concurrency group with `cancel-in-progress` on non-main refs. Every GitHub Action is pinned by full commit SHA with its version in a comment, taken from each action's real releases: `actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1` # v7.0.1 with `persist-credentials: false` and `fetch-depth: 0` — the commitlint range needs the base commits, which a shallow clone cannot reach; `pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115` # v6.1.1 with no version input, so it reads `packageManager` from `package.json` (a version there would collide with the pin); `actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1` # v7.1.0 with `cache: pnpm`. The timescale job's image is pinned to the exact tag `timescale/timescaledb:2.32.1-pg16` (digest `sha256:5d7a2f9d9d593315368338aa6054fda37d7707b4a12a912e30dcb7523385e2b4`), per KD11's CI target. Node matrix 22 and 24 on drizzle 0.x with a node 24 + drizzle 1.0-rc include installed per KTD3. The commitlint step is guarded to pull_request (`if: github.event_name == 'pull_request'`) with its refs wired explicitly from the event — step env `BASE: ${{ github.event.pull_request.base.sha }}`, `HEAD: ${{ github.event.pull_request.head.sha }}` — running `pnpm exec commitlint --from "$BASE" --to "$HEAD" --verbose`, which lints the PR's own commits, the content the squash message carries. Tests keep running on PRs as today — this suite is small, and the house fast/full split exists for suite sizes this repo does not have.
 - **Covers AE3.** The commitlint step runs on `pull_request` events regardless of which paths changed — the reusable workflow linting docs-only PRs' squash messages is the convention being copied.
 - **Test expectation:** none — workflow file; exercised only by a push (off-host).
-- **Verification:** structural review against the reusable workflow's conventions; the first push reports the CI verdict (recorded in the PR).
+- **Verification:** structural review against the reusable workflow's conventions — every action is SHA-pinned with a version comment, the timescale image matches the KD11 pin, and the commitlint env wires from `github.event.pull_request`; the first push reports the CI verdict (recorded in the PR).
 
 ### U7. Repoint package metadata
 
@@ -233,7 +234,7 @@ The work ships as one PR: U1 through U6 in dependency order, U7 (metadata) indep
 - **Files:** `package.json`, `README.md`.
 - **Approach:** `repository.url`, `bugs`, `homepage` → `systemfsoftware/drizzle-pg-extras`; nothing else moves in `package.json` — license stays MIT, engines stays >=18. The README gains a one-line development note: Node >=22 to develop, Node >=18 supported for consumers (KD5) — `engines` itself is not touched.
 - **Test expectation:** none — metadata and documentation.
-- **Verification:** the three fields resolve to the fork (a `node -e` read of `package.json`); the README carries the contributor floor.
+- **Verification:** the three fields resolve to the fork (a `node -e` read of `package.json`); the README carries the contributor floor; `pnpm format:check` re-passes with the README edit in place, and the README's tool references (install command, script names, node floor) match the swapped toolchain.
 
 ---
 
