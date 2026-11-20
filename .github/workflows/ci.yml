@@ -1,8 +1,9 @@
 name: CI
 
-# One static-checks job and the service-backed test jobs per push and pull request. The static checks run
-# once on the frozen lockfile; commitlint lints the pull request's title and body, which is what the squash
-# message carries. A newer push to a pull request cancels its older run; main never cancels.
+# One static-checks job and the service-backed test jobs per push and pull request, then `checks / check`, the one
+# aggregate check the Mergify queue gates on. The static checks run once on the frozen lockfile; commitlint lints the
+# pull request's title and body, which is what the squash message carries. A newer push to a pull request cancels its
+# older run; main never cancels.
 on:
   push:
   pull_request:
@@ -41,7 +42,9 @@ jobs:
       - run: pnpm build
       - run: pnpm exec attw --pack .
       - run: pnpm exec publint
-      - if: github.event_name == 'pull_request'
+      # A Mergify queue draft is a pull request titled "merge queue: ...", which commitlint rejects; the pull request
+      # itself is still linted.
+      - if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'mergify/merge-queue/')
         name: Lint the squash message
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -152,3 +155,20 @@ jobs:
       - run: pnpm test
         env:
           TIMESCALE_URL: postgres://extras:extras@localhost:5432/drizzle_pg_extras
+
+  # The one check the Mergify queue gates on; the name matches the shared CI of the other systemfsoftware repositories.
+  # List every other job in `needs`: a job left out is not gated.
+  check:
+    name: checks / check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: [static-checks, test, test-rc, timescale]
+    if: ${{ always() }}
+    steps:
+      - name: Require every job to succeed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          for result in $RESULTS; do
+            [ "$result" = success ] || { echo "A required job finished as: $result"; exit 1; }
+          done
