@@ -60,7 +60,8 @@ const PgArrayClass = (pgCore as Record<string, unknown>)['PgArray'] as
 export function unwrapArrayColumn(column: object): object {
   let current = column
   if (!PgArrayClass) return current
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // `is` bridges the 0.x wrapper class through an any cast; narrowing it is version-dependent.
+  // oxlint-disable-next-line typescript/no-explicit-any
   while (is(current, PgArrayClass as any)) current = (current as ArrayWrapper).baseColumn
   return current
 }

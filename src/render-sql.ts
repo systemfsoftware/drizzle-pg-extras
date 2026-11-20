@@ -8,7 +8,8 @@ function dialectFor(casing: Casing | undefined): PgDialect {
   const key = casing ?? ''
   let dialect = dialects.get(key)
   if (!dialect) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // PgDialect's config differs between drizzle-kit 0.x (casing) and 1.0 (no casing).
+    // oxlint-disable-next-line typescript/no-explicit-any
     dialect = new PgDialect(dialectConfig(casing) as any)
     dialects.set(key, dialect)
   }
