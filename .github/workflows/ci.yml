@@ -1,22 +1,64 @@
 name: CI
 
+# One static-checks job and the service-backed test jobs per push and pull request. The static checks run
+# once on the frozen lockfile; commitlint lints the pull request's title and body, which is what the squash
+# message carries. A newer push to a pull request cancels its older run; main never cancels.
 on:
   push:
   pull_request:
+    # `edited` re-runs the squash-message lint when the title or body changes without a push.
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+env:
+  CI: "true"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
+  static-checks:
+    name: static checks
     runs-on: ubuntu-latest
-    name: test (node ${{ matrix.node }}, drizzle ${{ matrix.drizzle }})
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      # attw and publint guard the built dual-format output, so the build precedes them.
+      - run: pnpm build
+      - run: pnpm exec attw --pack .
+      - run: pnpm exec publint
+      - if: github.event_name == 'pull_request'
+        name: Lint the squash message
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          title=${PR_TITLE//$'\r'/}
+          body=${PR_BODY//$'\r'/}
+          printf '%s\n\n%s' "$title" "$body" | pnpm exec commitlint --verbose
+
+  test:
+    name: test (node ${{ matrix.node }}, drizzle 0.x)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        node: [18, 22]
-        drizzle: ["0.x"]
-        include:
-          # drizzle-orm / drizzle-kit 1.0 release candidate, which needs a current Node.
-          - node: 22
-            drizzle: "1.0"
+        node: [22, 24]
     services:
       postgres:
         image: postgres:16
@@ -27,31 +69,31 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U extras -d drizzle_pg_extras"
+          --health-cmd "pg_isready -h localhost -U extras -d drizzle_pg_extras"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
-          cache: npm
-      - run: npm ci
-      - name: Install drizzle 1.0
-        if: matrix.drizzle == '1.0'
-        run: npm install --no-save drizzle-orm@rc drizzle-kit@rc
-      - run: npm run typecheck
-      - run: npm run lint
-      - run: npm test
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
         env:
           POSTGRES_URL: postgres://extras:extras@localhost:5432/drizzle_pg_extras
 
-  timescale:
+  test-rc:
+    name: test (node 24, drizzle 1.0-rc)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
-      timescaledb:
-        image: timescale/timescaledb:latest-pg16
+      postgres:
+        image: postgres:16
         env:
           POSTGRES_USER: extras
           POSTGRES_PASSWORD: extras
@@ -59,17 +101,54 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U extras -d drizzle_pg_extras"
+          --health-cmd "pg_isready -h localhost -U extras -d drizzle_pg_extras"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      # The rc install mutates this job's own dependency tree only (KTD3); this job runs tests only,
+      # so the mutation never feeds a static check — those run once, on the frozen lockfile.
+      - run: pnpm install --frozen-lockfile && pnpm add -D drizzle-orm@rc drizzle-kit@rc
+      - run: pnpm test
+        env:
+          POSTGRES_URL: postgres://extras:extras@localhost:5432/drizzle_pg_extras
+
+  timescale:
+    name: test (timescaledb 2.32)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    services:
+      timescaledb:
+        image: timescale/timescaledb:2.32.1-pg16@sha256:5d7a2f9d9d593315368338aa6054fda37d7707b4a12a912e30dcb7523385e2b4
+        env:
+          POSTGRES_USER: extras
+          POSTGRES_PASSWORD: extras
+          POSTGRES_DB: drizzle_pg_extras
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -h localhost -U extras -d drizzle_pg_extras"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm test
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
         env:
           TIMESCALE_URL: postgres://extras:extras@localhost:5432/drizzle_pg_extras

@@ -1,0 +1,13 @@
+allowBuilds:
+  esbuild: false
+  # dprint's postinstall fetches its platform binary; KD4 runs dprint as a devDependency.
+  dprint: true
+minimumReleaseAgeExclude:
+  - "@systemfsoftware/oxlint-config-cell-architecture@6.0.4"
+  - "@systemfsoftware/oxlint-config-dmmf@5.0.1"
+  - "@systemfsoftware/oxlint-config-recommended@8.0.3"
+  - "@systemfsoftware/oxlint-plugin-cell-architecture@7.1.1"
+  - "@systemfsoftware/oxlint-plugin-dmmf-workflow@8.0.1"
+  - "@systemfsoftware/oxlint-plugin-effect-platform@2.1.7"
+  - "@systemfsoftware/oxlint-plugin-effect-schema@6.0.8"
+  - "@systemfsoftware/oxlint-plugin-test-discipline@9.0.1"

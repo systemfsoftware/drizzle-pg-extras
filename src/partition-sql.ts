@@ -1,50 +1,67 @@
-import type { PartitionSnapshot, PartitionedTableSnapshot } from "./snapshot.js";
-import { quoteIdent, quoteLiteral } from "./quote.js";
+import { quoteIdent, quoteLiteral } from './quote.js'
+import type { PartitionedTableSnapshot, PartitionSnapshot } from './snapshot.js'
 
-const STRATEGY_CHAR = { range: "r", list: "l", hash: "h" } as const;
+const STRATEGY_CHAR = { range: 'r', list: 'l', hash: 'h' } as const
 
 export function convertPartitionedTableSql(
   parent: PartitionedTableSnapshot,
-  direction: "partition" | "unpartition",
+  direction: 'partition' | 'unpartition',
 ): string {
-  const key = `${parent.method.toUpperCase()} (${parent.columns.map((column) => quoteIdent(column)).join(", ")})`;
-  const comment =
-    direction === "partition"
-      ? `-- Convert empty ${quoteIdent(parent.schema)}.${quoteIdent(parent.name)} into a ${key} partitioned table. Refuses to run when the table has rows.`
-      : `-- Convert partitioned ${quoteIdent(parent.schema)}.${quoteIdent(parent.name)} back into a regular table. Refuses to run when it has rows or still has partitions.`;
-  const body = convertBody(parent, direction);
-  return `${comment}\n${wrapDo(body)}`;
+  const key = `${parent.method.toUpperCase()} (${parent.columns.map((column) => quoteIdent(column)).join(', ')})`
+  const comment = direction === 'partition'
+    ? `-- Convert empty ${quoteIdent(parent.schema)}.${
+      quoteIdent(parent.name)
+    } into a ${key} partitioned table. Refuses to run when the table has rows.`
+    : `-- Convert partitioned ${quoteIdent(parent.schema)}.${
+      quoteIdent(parent.name)
+    } back into a regular table. Refuses to run when it has rows or still has partitions.`
+  const body = convertBody(parent, direction)
+  return `${comment}\n${wrapDo(body)}`
 }
 
 export function createPartitionSql(partition: PartitionSnapshot): string {
-  const comment = `-- Create partition ${quoteIdent(partition.schema)}.${quoteIdent(partition.name)} of ${quoteIdent(partition.parentSchema)}.${quoteIdent(partition.parentName)} ${partition.boundSql}.`;
-  return `${comment}\n${wrapDo(partitionBody(partition, "create"))}`;
+  const comment = `-- Create partition ${quoteIdent(partition.schema)}.${quoteIdent(partition.name)} of ${
+    quoteIdent(partition.parentSchema)
+  }.${quoteIdent(partition.parentName)} ${partition.boundSql}.`
+  return `${comment}\n${wrapDo(partitionBody(partition, 'create'))}`
 }
 
 export function attachPartitionSql(partition: PartitionSnapshot): string {
-  const comment = `-- Attach ${quoteIdent(partition.schema)}.${quoteIdent(partition.name)} to ${quoteIdent(partition.parentSchema)}.${quoteIdent(partition.parentName)} ${partition.boundSql}.`;
-  return `${comment}\n${wrapDo(partitionBody(partition, "attach"))}`;
+  const comment = `-- Attach ${quoteIdent(partition.schema)}.${quoteIdent(partition.name)} to ${
+    quoteIdent(partition.parentSchema)
+  }.${quoteIdent(partition.parentName)} ${partition.boundSql}.`
+  return `${comment}\n${wrapDo(partitionBody(partition, 'attach'))}`
 }
 
-export function detachPartitionSql(partition: Pick<PartitionSnapshot, "schema" | "name" | "parentSchema" | "parentName">): string {
-  const comment = `-- Detach ${quoteIdent(partition.schema)}.${quoteIdent(partition.name)} from ${quoteIdent(partition.parentSchema)}.${quoteIdent(partition.parentName)}. The table is kept.`;
-  return `${comment}\n${wrapDo(detachBody(partition))}`;
+export function detachPartitionSql(
+  partition: Pick<PartitionSnapshot, 'schema' | 'name' | 'parentSchema' | 'parentName'>,
+): string {
+  const comment = `-- Detach ${quoteIdent(partition.schema)}.${quoteIdent(partition.name)} from ${
+    quoteIdent(partition.parentSchema)
+  }.${quoteIdent(partition.parentName)}. The table is kept.`
+  return `${comment}\n${wrapDo(detachBody(partition))}`
 }
 
-export function dropPartitionSql(partition: Pick<PartitionSnapshot, "schema" | "name" | "parentSchema" | "parentName">): string {
-  const comment = `-- Drop empty partition ${quoteIdent(partition.schema)}.${quoteIdent(partition.name)}. Refuses to run when the partition has rows.`;
-  return `${comment}\n${wrapDo(dropBody(partition))}`;
+export function dropPartitionSql(
+  partition: Pick<PartitionSnapshot, 'schema' | 'name' | 'parentSchema' | 'parentName'>,
+): string {
+  const comment = `-- Drop empty partition ${quoteIdent(partition.schema)}.${
+    quoteIdent(partition.name)
+  }. Refuses to run when the partition has rows.`
+  return `${comment}\n${wrapDo(dropBody(partition))}`
 }
 
-function convertBody(parent: PartitionedTableSnapshot, direction: "partition" | "unpartition"): string {
-  const partitionBy = `${parent.method.toUpperCase()} (${parent.columns.map((column) => quoteIdent(column)).join(", ")})`;
+function convertBody(parent: PartitionedTableSnapshot, direction: 'partition' | 'unpartition'): string {
+  const partitionBy = `${parent.method.toUpperCase()} (${
+    parent.columns.map((column) => quoteIdent(column)).join(', ')
+  })`
   return `
 DECLARE
   parent_schema text := ${quoteLiteral(parent.schema)};
   parent_name text := ${quoteLiteral(parent.name)};
   direction text := ${quoteLiteral(direction)};
   strategy "char" := ${quoteLiteral(STRATEGY_CHAR[parent.method])};
-  key_columns name[] := ARRAY[${parent.columns.map((column) => `${quoteLiteral(column)}::name`).join(", ")}];
+  key_columns name[] := ARRAY[${parent.columns.map((column) => `${quoteLiteral(column)}::name`).join(', ')}];
   partition_by text := ${quoteLiteral(partitionBy)};
   swap_name text := ${quoteLiteral(swapName(parent.name))};
   parent_oid oid;
@@ -450,10 +467,10 @@ BEGIN
     EXECUTE format('COMMENT ON TABLE %I.%I IS %L', parent_schema, parent_name, table_comment);
   END IF;
 END
-`;
+`
 }
 
-function partitionBody(partition: PartitionSnapshot, mode: "create" | "attach"): string {
+function partitionBody(partition: PartitionSnapshot, mode: 'create' | 'attach'): string {
   return `
 DECLARE
   child_schema text := ${quoteLiteral(partition.schema)};
@@ -479,21 +496,21 @@ BEGIN
       RAISE EXCEPTION 'drizzle-pg-extras: %.% is already a partition of another table.', child_schema, child_name;
     END IF;
     ${
-      mode === "create"
-        ? `RAISE EXCEPTION 'drizzle-pg-extras: %.% already exists and is not a partition of %.%.', child_schema, child_name, parent_schema, parent_name;`
-        : `EXECUTE format('ALTER TABLE %I.%I ATTACH PARTITION %I.%I %s', parent_schema, parent_name, child_schema, child_name, bound_sql); RETURN;`
-    }
+    mode === 'create'
+      ? `RAISE EXCEPTION 'drizzle-pg-extras: %.% already exists and is not a partition of %.%.', child_schema, child_name, parent_schema, parent_name;`
+      : `EXECUTE format('ALTER TABLE %I.%I ATTACH PARTITION %I.%I %s', parent_schema, parent_name, child_schema, child_name, bound_sql); RETURN;`
+  }
   END IF;
   ${
-    mode === "create"
+    mode === 'create'
       ? `EXECUTE format('CREATE TABLE %I.%I PARTITION OF %I.%I %s', child_schema, child_name, parent_schema, parent_name, bound_sql);`
       : `RAISE EXCEPTION 'drizzle-pg-extras: %.% does not exist. Create it with drizzle-kit before attaching it.', child_schema, child_name;`
   }
 END
-`;
+`
 }
 
-function detachBody(partition: Pick<PartitionSnapshot, "schema" | "name" | "parentSchema" | "parentName">): string {
+function detachBody(partition: Pick<PartitionSnapshot, 'schema' | 'name' | 'parentSchema' | 'parentName'>): string {
   return `
 DECLARE
   child_schema text := ${quoteLiteral(partition.schema)};
@@ -512,10 +529,10 @@ BEGIN
     EXECUTE format('ALTER TABLE %I.%I DETACH PARTITION %I.%I', parent_schema, parent_name, child_schema, child_name);
   END IF;
 END
-`;
+`
 }
 
-function dropBody(partition: Pick<PartitionSnapshot, "schema" | "name" | "parentSchema" | "parentName">): string {
+function dropBody(partition: Pick<PartitionSnapshot, 'schema' | 'name' | 'parentSchema' | 'parentName'>): string {
   return `
 DECLARE
   child_schema text := ${quoteLiteral(partition.schema)};
@@ -543,26 +560,26 @@ BEGIN
   END IF;
   EXECUTE format('DROP TABLE %I.%I', child_schema, child_name);
 END
-`;
+`
 }
 
 function wrapDo(body: string): string {
-  let tag = "pg_extras";
-  let n = 0;
+  let tag = 'pg_extras'
+  let n = 0
   while (body.includes(`$${tag}$`)) {
-    n += 1;
-    tag = `pg_extras${n}`;
+    n += 1
+    tag = `pg_extras${n}`
   }
-  return `DO $${tag}$${body.trim()}\n$${tag}$;`;
+  return `DO $${tag}$${body.trim()}\n$${tag}$;`
 }
 
 function swapName(name: string): string {
-  const suffix = "__pgx";
-  const max = 63 - Buffer.byteLength(suffix);
-  let bytes = Buffer.from(name);
-  if (bytes.length > max) bytes = bytes.subarray(0, max);
+  const suffix = '__pgx'
+  const max = 63 - Buffer.byteLength(suffix)
+  let bytes = Buffer.from(name)
+  if (bytes.length > max) bytes = bytes.subarray(0, max)
   while (bytes.length > 0 && (bytes[bytes.length - 1]! & 0xc0) === 0x80) {
-    bytes = bytes.subarray(0, bytes.length - 1);
+    bytes = bytes.subarray(0, bytes.length - 1)
   }
-  return bytes.toString() + suffix;
+  return bytes.toString() + suffix
 }
