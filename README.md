@@ -141,7 +141,7 @@ console.log(renderIdempotent(extras))
 | Export                                            | Role                                                                                                                                                                                                                               |
 | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `pgFunction(name, config)`                        | `plpgsql` or `sql`. Args are `IN` only. `returns` is a SQL type string or a Drizzle column (`users.id`). `searchPath: []` emits `SET search_path TO ''`.                                                                           |
-| `pgTrigger(name, config)`                         | Table, `pgView()`, or `{ name, schema }`. `columns` is `UPDATE OF`. `when` is SQL or `({ OLD, NEW }) => sql\`…\``.`constraint`,`referencing`, and`enabled: false` are in [Triggers](#triggers).                                    |
+| `pgTrigger(name, config)`                         | Table, `pgView()`, or `{ name, schema }`. `columns` is `UPDATE OF`. `when` is SQL or `` ({ OLD, NEW }) => sql`…` ``. `constraint`, `referencing`, and `enabled: false` are in [Triggers](#triggers).                               |
 | `updatedAtTrigger(table, column)`                 | `BEFORE UPDATE` trigger. `column` must be `date`, `time`, or `timestamp`. Tables that share a database column name share one function, `set_<column>`.                                                                             |
 | `pgExtension(name, { schema, version, cascade })` | `CREATE EXTENSION IF NOT EXISTS`, optionally `WITH SCHEMA` and `VERSION`.                                                                                                                                                          |
 | `withComment(target, text)`                       | Table, column builder, enum, finished view or materialized view, `pgFunction`, trigger, extension, or an index / `unique` / `check` / `primaryKey` / `foreignKey` builder. Returns the same object. Does not change Drizzle's SQL. |
@@ -253,7 +253,7 @@ export const profilesGuard = pgTrigger('profiles_guard', {
 
 `withComment` on a trigger still emits `COMMENT ON TRIGGER ... ON table`. A normal `CREATE OR REPLACE` keeps that comment. A constraint trigger that is dropped and created gets the comment statement again.
 
-`when` is a string or a `sql` fragment, or, on a Drizzle table, `({ OLD, NEW }) => sql\`…\``(the callback may return a string). TypeScript types`OLD`and`NEW`as that table's columns. The callback inserts each column as`OLD."name"`or`NEW."name"`. A string is used as written. A`sql`fragment is rendered to text. Neither is compared to the table's columns, and the expression is not checked as a boolean.`pgTrigger`renders the clause, omits an empty one, and strips a trailing`;`. It throws if a`;`is still present, if the trigger is`INSTEAD OF`, or if a scan of the text finds the word`SELECT`or`EXISTS`, the word`OLD`or`NEW`on a statement trigger,`OLD`when the events include`INSERT`, or`NEW`when the events include`DELETE`. The scan skips comments, quoted strings, quoted identifiers, and dollar quotes, and it does not parse SQL. The snapshot render runs that scan again, with the same casing rules as the rest of the snapshot. The stored text is written as`WHEN ( ... )`. Postgres reports any other error when the migration runs.
+`when` is a string or a `sql` fragment, or, on a Drizzle table, `` ({ OLD, NEW }) => sql`…` `` (the callback may return a string). TypeScript types `OLD` and `NEW` as that table's columns. The callback inserts each column as `OLD."name"` or `NEW."name"`. A string is used as written. A `sql` fragment is rendered to text. Neither is compared to the table's columns, and the expression is not checked as a boolean. `pgTrigger` renders the clause, omits an empty one, and strips a trailing `;`. It throws if a `;` is still present, if the trigger is `INSTEAD OF`, or if a scan of the text finds the word `SELECT` or `EXISTS`, the word `OLD` or `NEW` on a statement trigger, `OLD` when the events include `INSERT`, or `NEW` when the events include `DELETE`. The scan skips comments, quoted strings, quoted identifiers, and dollar quotes, and it does not parse SQL. The snapshot render runs that scan again, with the same casing rules as the rest of the snapshot. The stored text is written as `WHEN ( ... )`. Postgres reports any other error when the migration runs.
 
 ### Trigger limits
 
@@ -430,7 +430,7 @@ The supported path is `drizzle-kit generate`, then `drizzle-pg-extras generate`,
 | drizzle-kit        | `>=0.31.0` journal format. Tested with 0.31.11: `migrate` applies the file, and the next `generate` reports no schema changes.                                                                                                                                      |
 | drizzle-kit 1.0 rc | Writes the folder-per-migration layout with an empty diff snapshot, tested through `drizzle-kit generate`, `check` and `migrate` on 1.0.0-rc.5. A drizzle-kit 0.x journal folder still gets journal entries; upgrade it with `drizzle-kit up` before moving to 1.0. |
 | PostgreSQL         | 14 or newer (`CREATE OR REPLACE TRIGGER`). Tested on 16.                                                                                                                                                                                                            |
-| TimescaleDB        | Hypertables, compression settings, retention policies, and compression policies. Tested with TimescaleDB 2.32 on PostgreSQL 16. CI uses `timescale/timescaledb:latest-pg16`.                                                                                        |
+| TimescaleDB        | Hypertables, compression settings, retention policies, and compression policies. Tested with TimescaleDB 2.32 on PostgreSQL 16. CI uses `timescale/timescaledb:2.32.1-pg16`.                                                                                        |
 | Node.js            | 18 or newer. ESM and CJS builds.                                                                                                                                                                                                                                    |
 
 ## What it does not do yet
@@ -460,13 +460,14 @@ drizzle-pg-extras check [--config drizzle.config.ts]
 ## Development
 
 ```sh
-npm install
-npm test
-npm run typecheck
-npm run lint
+pnpm install
+pnpm test
+pnpm typecheck
+pnpm lint
+pnpm format:check
 ```
 
-Unit tests cover SQL generation and the snapshot diff, including comments, trigger rules, partition bounds, and hypertable SQL. `POSTGRES_URL` points the Postgres integration tests at a real server. One runs `drizzle-kit migrate`, checks that the trigger fires, and that comments on the table, column, enum, view, function, trigger, index, constraint, and extension exist. Another checks a deferred constraint trigger, transition tables, `INSTEAD OF` on a view, `UPDATE OF` / `WHEN`, and `DISABLE TRIGGER`. The partition test checks range, list, and hash routing, attach, the empty-table guard, and the down file. `TIMESCALE_URL` points the Timescale test at a server with the extension. It checks `create_hypertable`, compression, both policies, a second generate that changes the chunk interval, the down file, and that `drizzle-kit generate` reports no schema changes. CI keeps the Postgres 16 job as it was and runs the Timescale test in a separate job on `timescale/timescaledb:latest-pg16`.
+Unit tests cover SQL generation and the snapshot diff, including comments, trigger rules, partition bounds, and hypertable SQL. `POSTGRES_URL` points the Postgres integration tests at a real server. One runs `drizzle-kit migrate`, checks that the trigger fires, and that comments on the table, column, enum, view, function, trigger, index, constraint, and extension exist. Another checks a deferred constraint trigger, transition tables, `INSTEAD OF` on a view, `UPDATE OF` / `WHEN`, and `DISABLE TRIGGER`. The partition test checks range, list, and hash routing, attach, the empty-table guard, and the down file. `TIMESCALE_URL` points the Timescale test at a server with the extension. It checks `create_hypertable`, compression, both policies, a second generate that changes the chunk interval, the down file, and that `drizzle-kit generate` reports no schema changes. CI keeps the Postgres 16 job as it was and runs the Timescale test in a separate job on `timescale/timescaledb:2.32.1-pg16`.
 
 ## License
 
