@@ -3,6 +3,7 @@
   "version": "0.6.0",
   "description": "Declare Postgres functions, triggers, extensions, partitioned tables, comments, and TimescaleDB hypertables next to a Drizzle schema and generate SQL migrations.",
   "type": "module",
+  "packageManager": "pnpm@12.21.0",
   "license": "MIT",
   "repository": {
     "type": "git",
