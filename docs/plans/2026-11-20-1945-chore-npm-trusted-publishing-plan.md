@@ -32,6 +32,8 @@ The repository today is one package at the root, with no flake, no release confi
 
 ### Requirements
 
+- R0. Issue YOU-1998: drizzle-pg-extras publishes to npm through systemfsoftware/pnpm-release-management by trusted publishing (OIDC), so Younna can depend on it.
+
 **Name and layout**
 
 - R1. The package is named `@systemfsoftware/drizzle-pg-extras`. Its manifest metadata and the README's install and import lines carry that name.
