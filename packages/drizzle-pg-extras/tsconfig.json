@@ -17,7 +17,6 @@
     "tests/**/*.ts",
     "tsdown.config.ts",
     "vitest.config.ts",
-    "oxlint.config.ts",
-    "commitlint.config.ts"
+    "oxlint.config.ts"
   ]
 }

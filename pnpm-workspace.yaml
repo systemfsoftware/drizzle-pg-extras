@@ -11,3 +11,8 @@ minimumReleaseAgeExclude:
   - "@systemfsoftware/oxlint-plugin-effect-platform@2.1.7"
   - "@systemfsoftware/oxlint-plugin-effect-schema@6.0.8"
   - "@systemfsoftware/oxlint-plugin-test-discipline@9.0.1"
+packages:
+  - packages/*
+versioning:
+  changelog:
+    storage: repository
