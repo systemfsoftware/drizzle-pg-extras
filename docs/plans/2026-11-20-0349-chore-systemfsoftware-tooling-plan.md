@@ -13,7 +13,7 @@ execution: code
 - **Objective:** drizzle-pg-extras is developed with the systemfsoftware stack — pnpm, oxlint, dprint, tsdown, commitlint, house-shaped CI — while the published package surface (exports map, dist files, engines, MIT license) stays exactly what v0.6.0 ships, and this artifact records where the library stands against the current state of the art with every found gap either scheduled as a unit or rejected with a reason.
 - **Means:** minimal convention copy from public systemfsoftware sources — `systemfsoftware/effect-daemon` and upstream documentation; nothing invented. Implementation happens in later lanes; this lane writes and commits the plan only.
 - **Product authority:** owner order (2026-11-20): "update the tooling but minimally i.e. pnpm latest, oxlint, dprint, the usual jazz were using. SOTAify it with gemini and then dogfood it into a systemfsoftware application". Earlier ruling: "no tsup obviously we use tsdown".
-- **Open blockers:** none for the tooling units. The SOTA questions below go to Gemini through the conductor; its answers may revise gap verdicts before those units are implemented.
+- **Open blockers:** none. The SOTA questions went to Gemini through the conductor; its rulings, accepted 2026-11-20, are recorded as KD10-KD13.
 - **Execution profile:** one PR carrying U1-U7 in dependency order; implementation happens in later lanes; the owner releases (no publish from these lanes).
 
 ---
@@ -22,7 +22,7 @@ execution: code
 
 ### Summary
 
-Swap npm to pnpm, ESLint to oxlint, tsup to tsdown, add dprint and commitlint, restyle CI to the house shape, and repoint package metadata at systemfsoftware/drizzle-pg-extras — all behavior-preserving. The same artifact carries a cited SOTA baseline (Drizzle 1.0, comparator libraries, TimescaleDB 2.32, Atlas) and the questions for Gemini.
+Swap npm to pnpm, ESLint to oxlint, tsup to tsdown, add dprint and commitlint, restyle CI to the house shape, and repoint package metadata at systemfsoftware/drizzle-pg-extras — all behavior-preserving. The same artifact carries a cited SOTA baseline (Drizzle 1.0, comparator libraries, TimescaleDB 2.32, Atlas) whose open questions went to Gemini and came back as recorded rulings (KD10-KD13).
 
 ### Problem Frame
 
@@ -55,7 +55,7 @@ The repo still carries the original author's stack: npm lockfile, ESLint flat co
 **SOTA baseline (artifact content, not code)**
 
 - R11. The SOTA Baseline section states, per object type this package manages, the current state from primary sources with citations, and classifies every found gap as a scheduled unit or rejected with a reason.
-- R12. Outstanding Questions lists the questions for Gemini, relayed by the conductor; answers may revise gap verdicts before those units are implemented and do not gate the tooling units.
+- R12. Outstanding Questions lists the questions for Gemini, relayed by the conductor; answers may revise gap verdicts before those units are implemented and do not gate the tooling units. The 2026-11-20 answers arrived and are recorded as KD10-KD13; no open questions remain.
 
 ### Key Decisions
 
@@ -67,7 +67,11 @@ The repo still carries the original author's stack: npm lockfile, ESLint flat co
 - KD6. pnpm pins to latest 12.x at implementation time (12.21.0 on 2026-11-20). Governs R1.
 - KD7. Repo-owned CI restyled from the reusable workflow's conventions instead of calling it: the reusable CI runs commands inside `nix develop` and has no services input, and adopting Nix is not minimal. Governs R8-R10.
 - KD8. MIT stays; effect-daemon's Apache-2.0 is not adopted with a tooling swap. Governs R7.
-- KD9. vitest stays 3.x and TypeScript stays 5.9 (session-settled: user-directed — "vitest kept"; the rest of the boundary is the minimality ruling). No Effect/tsgo/TS7/catalog/monorepo machinery. Governs R3-R5 context.
+- KD9. vitest stays 3.x and TypeScript stays 5.9 (session-settled: user-directed — "vitest kept"; the rest of the boundary is the minimality ruling). No Effect/tsgo/TS7/catalog/monorepo machinery. Governs R3-R5 context; restated in Scope Boundaries.
+- KD10. The declaration-plus-appended-migration boundary is permanent: the package never couples to drizzle-kit's internal diff engine and never waits on upstream drizzle to ship these objects (session-settled: user-approved — Gemini's SOTA ruling relayed by the conductor, accepted 2026-11-20: kit rewrote its migration and snapshot internals, so differ coupling would break on every release, while this package's own snapshot/diff/check layer sits cleanly above kit's table DDL). Governs R11; answers Q1.
+- KD11. TimescaleDB naming, floor, and ordering: the follow-up feature PR lands columnstore policy naming (U-G2) first, then continuous aggregates (U-G1); emitted DDL targets the 2.18+ columnstore functions (`add_columnstore_policy`, `remove_columnstore_policy`, `timescaledb.enable_columnstore`) with the `compression` TypeScript property kept as a deprecated alias so v0.6.0 callers do not break; the package floor becomes TimescaleDB 2.18 and CI tests 2.32.x (session-settled: user-approved — same channel: 2.18 standardized the columnstore terminology while the server keeps compression aliases, and U-G2's canonical policy builders are what U-G1's aggregates attach to; U-G1 is a declarative surface with full snapshot/diff/generate/check integration, never a raw SQL wrapper). Governs the U-G1/U-G2 deferred units; answers Q2 and Q3.
+- KD12. Export-parity checks adopted now: `@arethetypeswrong/cli` (attw) and publint guard the dual ESM+CJS declaration output; `devExports` and `@microsoft/api-extractor` stay deferred until the Timescale API surface stabilizes (session-settled: user-approved — same channel: the checks directly verify KD2's dual-format output while the heavier machinery needs a stable surface first). Governs R7, U2; answers Q4.
+- KD13. Functions stay IN-only and procedures stay out permanently (session-settled: user-approved — same channel: OUT/INOUT/VARIADIC changes pg_proc identity semantics for drop/alter, procedures add distinct transaction-control drop semantics, and there is no demand for either). Answers Q5.
 
 <!-- ce-section: work-relationships -->
 ### How This Work Fits Together
@@ -93,16 +97,16 @@ This plan owns the tooling swap plus the SOTA baseline record. The owner's full 
 ### Scope Boundaries
 
 - No `src/` behavior changes; the only source diffs are mechanical dprint reformatting.
-- No dependency bumps beyond tooling: drizzle-orm/drizzle-kit stay at current devDeps (0.45.x / 0.31.x; peers already allow 1.0), vitest stays 3.x, TypeScript stays 5.9.
+- No dependency bumps beyond tooling: drizzle-orm/drizzle-kit stay at current devDeps (0.45.x / 0.31.x; peers already allow 1.0), vitest stays 3.x, TypeScript stays 5.9 (KD9).
 - No Nix flake, no turbo/catalog/monorepo, no `bin/` tool wrappers, no `@effect/tsgo`.
 - No publish, no visibility change, no version bump or changelog entry — the owner releases.
 - `/tmp/dpe` (rejected tsup-based edits) is ignored; nothing is revived from it.
 
 ### Deferred to Follow-Up Work
 
-- The SOTA gap units — U-G1 continuous aggregates and U-G2 columnstore-policy naming (scheduled in the SOTA Baseline table) — implemented in their own later lanes.
+- The SOTA gap units — U-G2 columnstore-policy naming first, then U-G1 continuous aggregates (KD11) — land together in one follow-up feature PR with full snapshot/diff/generate/check integration.
 - A drizzle-kit 1.0-final support pass once 1.0 reaches npm (on 2026-11-20 latest is 0.45.4 / 0.31.11 and `rc` resolves to 1.0.0-rc.5).
-- effect-daemon's API-parity flourishes (devExports, api-extractor, attw, `.mjs`-only output).
+- The remaining API-parity machinery — `devExports` and `@microsoft/api-extractor` — deferred per KD12; attw and publint are adopted now (U2).
 
 ### SOTA Baseline
 
@@ -110,27 +114,21 @@ Verified 2026-11-20 against primary sources. This package covers functions, trig
 
 | Object | Drizzle 1.0 state | Comparator state | Verdict |
 | --- | --- | --- | --- |
-| Functions, triggers | Issues #843 open; PRs #5373 and #4844 open (gh api, 2026-11-20) | Atlas HCL declares trigger/function/procedure with diffing (atlasgo.io/hcl/postgres; triggers since Atlas v0.17, Jan 2024) | Niche intact; no unit |
+| Functions, triggers | Issues #843 open; PRs #5373 and #4844 open (gh api, 2026-11-20) | Atlas HCL declares trigger/function/procedure with diffing (atlasgo.io/hcl/postgres; triggers since Atlas v0.17, Jan 2024) | Niche intact; no unit — the boundary is permanent: declaration-plus-appended-migration, never a drizzle-kit differ coupling (KD10) |
 | Extensions | #2124 open; 1.0 docs Extensions page: "There is no specific code to create an extension inside the Drizzle schema" | Atlas declares `extension` blocks | Covered; no unit |
 | Comments | #886 open | onozaty/drizzle-db-comments-generator (single-purpose) | Covered; no unit |
 | Policies, roles, views, matviews, sequences | Native in 1.0 (RLS docs: `pgPolicy`, `pgTable.withRLS`, `entities.roles`; Views docs) | — | Outside this package's identity; rejected |
 | Partitioned tables | #2854 open | drizzle-partition rewrites kit's `CREATE TABLE`; Atlas declares partitions | Covered; no unit |
-| Continuous aggregates | n/a | TimescaleDB 2.32 flagship: caggs, refresh policies, realtime, hierarchical, JOIN support matrix | **Scheduled — U-G1** |
-| Columnstore policy naming | n/a | 2.18+ renames compression to columnstore (`add_columnstore_policy`, hypercore); repo emits `add_compression_policy` (`src/timescale-sql.ts`) | **Scheduled — U-G2** (verify aliases on 2.32, adopt naming compat) |
+| Continuous aggregates | n/a | TimescaleDB 2.32 flagship: caggs, refresh policies, realtime, hierarchical, JOIN support matrix | **Scheduled — U-G1**, after U-G2, in the follow-up feature PR: declarative aggregates with refresh/retention/columnstore policies and full snapshot/diff/generate/check integration, never a raw SQL wrapper (KD11) |
+| Columnstore policy naming | n/a | 2.18+ renames compression to columnstore (`add_columnstore_policy`, hypercore); repo emits `add_compression_policy` (`src/timescale-sql.ts`) | **Scheduled — U-G2**, before U-G1: emit 2.18+ columnstore DDL, keep `compression` as a deprecated TypeScript alias, package floor TimescaleDB 2.18, CI on 2.32.x (KD11) |
 | `CREATE TABLE ... WITH (tsdb.hypertable)` | n/a | Newer declarative TimescaleDB form | Rejected: drizzle-kit owns `CREATE TABLE` and this package never rewrites kit files (README Partitioning rationale) |
-| Function arg modes beyond IN; procedures (`CALL`) | n/a | Atlas supports OUT/INOUT/VARIADIC args and `procedure` blocks | Rejected for now: README documents the IN-only, functions-only boundary; no demand signal; revisit on request |
+| Function arg modes beyond IN; procedures (`CALL`) | n/a | Atlas supports OUT/INOUT/VARIADIC args and `procedure` blocks | Rejected permanently: IN-only functions, no procedures (KD13) |
 
 Compared packages alive as of 2026-11-20 (gh api): RagedPanda/drizzle-triggers (pushed 2026-11-08), onozaty/drizzle-db-comments-generator (2026-10-12), Rezarys/drizzle-partition (2026-09-12) — each single-purpose, so the README's one-package breadth claim holds.
 
 ### Outstanding Questions
 
-All deferred to planning or later lanes; the conductor relays them to Gemini.
-
-- Q1. With drizzle issues #843/#2124/#2854/#886 and PRs #5373/#4844 all still open, is the declaration-plus-appended-migration model the right long-term boundary, or should the package move toward a diff-engine integration before drizzle ships these objects?
-- Q2. For TimescaleDB parity: is the right first cut for continuous aggregates a declare-cagg-plus-refresh-policy-plus-realtime-flag surface with snapshot/diff/generate integration like hypertables, or should naming parity (U-G2) land first?
-- Q3. Should generated policy calls adopt the 2.18+ columnstore naming while keeping compression aliases for older servers, and which TimescaleDB version becomes the package's floor?
-- Q4. Which systemfsoftware package conventions, if any, should this library adopt before deeper dogfooding into a systemfsoftware application (exports/devExports shape, entry naming, api-extractor/attw), given the CJS-compatible surface must stay?
-- Q5. Are OUT/INOUT/VARIADIC function args and procedures worth scheduling, or does the documented IN-only, functions-only boundary stand?
+None open. Q1-Q5 were answered by the conductor-relayed Gemini SOTA rulings, accepted 2026-11-20, and are recorded as KD10-KD13 and in the SOTA Baseline verdicts. The continuous-aggregate declaration surface (KD11's U-G1) is designed in its follow-up lane.
 
 ### Sources / Research
 
@@ -144,6 +142,7 @@ All deferred to planning or later lanes; the conductor relays them to Gemini.
 - Atlas: atlasgo.io/hcl/postgres (trigger/function/procedure/extension/view/aggregate blocks); atlasgo.io/blog/2024/01/01/atlas-v-0-17 (trigger support since v0.17); Atlas v1.4 announced 2026-11-17.
 - TimescaleDB: docs.timescale.com (redirects to tigerdata.com/docs) continuous aggregates page (refresh, realtime since 2.13 disabled by default, hierarchical, JOIN matrix, v2.25 removes pre-2.7 cagg format); columnstore/hypercore policy functions; current release 2.32.1 (2026-11-19, gh api).
 - tsdown: Rolldown output `banner` option (rolldown.rs/reference/OutputOptions.banner); shebang-bin precedent yamada-ui#5287 ("add shebang to binary via tsdown banner").
+- SOTA rulings: conductor-relayed Gemini review, accepted by the owner 2026-11-20; recorded as KD10-KD13.
 
 ---
 
@@ -183,12 +182,12 @@ The work ships as one PR: U1 through U6 in dependency order, U7 (metadata) indep
 
 - **Goal:** the same dist contract produced by tsdown (R2; KD1, KD2, KTD1).
 - **Requirements:** R2. **Dependencies:** U1.
-- **Files:** `tsdown.config.ts` (new), `tsup.config.ts` (delete), `package.json` (devDeps, `build` script), `tsconfig.json` (include list: `tsup.config.ts` → `tsdown.config.ts`).
-- **Approach:** verify tsdown output parity first, then remove tsup — build with tsdown side by side, confirm the five dist files plus sourcemaps and the cli shebang, then delete `tsup.config.ts` and the tsup dependency in the same commit.
+- **Files:** `tsdown.config.ts` (new), `tsup.config.ts` (delete), `package.json` (devDeps: `build` script swap, `@arethetypeswrong/cli`, `publint`), `tsconfig.json` (include list: `tsup.config.ts` → `tsdown.config.ts`).
+- **Approach:** verify tsdown output parity first, then remove tsup — build with tsdown side by side, confirm the five dist files plus sourcemaps and the cli shebang, then delete `tsup.config.ts` and the tsup dependency in the same commit. The export surface is type-checked, not just runtime-smoked: `pnpm exec attw --pack .` and `pnpm exec publint` guard the dual ESM+CJS declaration output (KD12).
 - **Test scenarios:**
   - Covers AE1. Fresh `pnpm install --frozen-lockfile && pnpm build`; a git diff of `package.json` shows the `exports`, `main`, `module`, and `types` fields byte-identical to v0.6.0, and `node --input-type=module -e "import('./dist/index.js')"` plus `node -e "require('./dist/index.cjs')"` both load — the map is proven unchanged by the diff, the artifacts behind it by the loads. (Do not import by bare package name from the repo root: pnpm does not self-link, so `import('drizzle-pg-extras')` cannot resolve there.)
-  - Covers AE2. `node dist/cli.js --help` runs (bin entry intact, shebang preserved), and the pre-existing `tests/unit/cli.test.ts` suite passes unchanged under vitest — that suite already enforces AE2's check-exits-1 contract, so it passing unmodified is the parity evidence.
-- **Verification:** dist file list matches the tsup output; `pnpm typecheck` passes with the updated tsconfig include.
+  - Covers AE2. `dist/cli.js` executes directly (`./dist/cli.js --help` — shebang and executable bit, not only `node dist/cli.js`), and the pre-existing `tests/unit/cli.test.ts` suite passes unchanged under vitest — that suite already enforces AE2's check-exits-1 contract, so it passing unmodified is the parity evidence.
+- **Verification:** dist file list matches the tsup output; `pnpm typecheck` passes with the updated tsconfig include; `pnpm exec attw --pack .` and `pnpm exec publint` report no export-surface or dual-format type-resolution problems (KD12).
 
 ### U3. Replace ESLint with oxlint
 
@@ -197,14 +196,14 @@ The work ships as one PR: U1 through U6 in dependency order, U7 (metadata) indep
 - **Files:** `oxlint.config.ts` (new), `eslint.config.js` (delete), `package.json` (devDeps: oxlint `~1.93`, `@systemfsoftware/oxlint-config-recommended`; `lint` script).
 - **Approach:** copy the effect-daemon-spec two-line config (`import recommended from '@systemfsoftware/oxlint-config-recommended'`, `defineConfig({ extends: [recommended] })`); script `lint` becomes `oxlint .`; resolve first-run findings per KTD2.
 - **Test expectation:** none — lint configuration; proven by exit codes.
-- **Verification:** `pnpm lint` exits 0; `git grep -nI -e eslint -e typescript-eslint` returns nothing outside docs/plans and CHANGELOG.
+- **Verification:** `pnpm lint` exits 0 with the preset proven loaded — oxlint's run summary shows the house preset's active rule count, or a seeded violation the preset catches fires; `git grep -nI -e eslint -e typescript-eslint` returns nothing outside docs/plans and CHANGELOG.
 
 ### U4. Add dprint formatting
 
 - **Goal:** house formatter plus one mechanical reformat pass (R4; KD4).
 - **Requirements:** R4. **Dependencies:** U1.
 - **Files:** `dprint.json` (new), `package.json` (devDep `dprint`, `format`/`format:check` scripts), all formatted `.ts`/`.json`/`.md` sources (mechanical).
-- **Approach:** copy effect-daemon `dprint.json` with the same pinned plugins; excludes reduced to this repo: `dist/**`, `node_modules`, `pnpm-lock.yaml`, `coverage/**`; run one repo-wide reformat.
+- **Approach:** copy effect-daemon `dprint.json` with the same pinned plugins; excludes: `dist/**`, `node_modules`, `pnpm-lock.yaml`, `coverage/**`, and `docs/**` — decision artifacts stay out of format churn; run one repo-wide reformat.
 - **Test expectation:** none — formatting; behavior proven by the existing suite after the reformat.
 - **Verification:** `pnpm format:check` exits 0; `pnpm typecheck` and the unit tests still pass after the reformat.
 
@@ -222,19 +221,19 @@ The work ships as one PR: U1 through U6 in dependency order, U7 (metadata) indep
 - **Goal:** house-shaped, repo-owned workflow (R8-R10; KD5, KD7, KTD3).
 - **Requirements:** R8, R9, R10. **Dependencies:** U1-U5.
 - **Files:** `.github/workflows/ci.yml`.
-- **Approach:** keep the two service-backed test jobs (postgres 16 with the drizzle matrix, timescaledb); apply the house conventions from the reusable workflow: `permissions: contents: read`; concurrency group with `cancel-in-progress` on non-main refs; checkout pinned by commit SHA with `persist-credentials: false`; `pnpm/action-setup@v6` plus `actions/setup-node@v7` with `cache: pnpm`; node matrix 22 and 24 on drizzle 0.x with a node 24 + drizzle 1.0-rc include installed per KTD3; commitlint step on pull_request events (`pnpm exec commitlint --from "$BASE" --to "$HEAD" --verbose`). Tests keep running on PRs as today — this suite is small, and the house fast/full split exists for suite sizes this repo does not have.
+- **Approach:** keep the two service-backed test jobs (postgres 16 with the drizzle matrix, timescaledb); apply the house conventions from the reusable workflow: `permissions: contents: read`; concurrency group with `cancel-in-progress` on non-main refs; checkout pinned by commit SHA with `persist-credentials: false` and `fetch-depth: 0` — the commitlint range needs the base commits, which a shallow clone cannot reach; `pnpm/action-setup@v6` with no version input, so it reads `packageManager` from `package.json` (a version there would collide with the pin), plus `actions/setup-node@v7` with `cache: pnpm`; node matrix 22 and 24 on drizzle 0.x with a node 24 + drizzle 1.0-rc include installed per KTD3; commitlint step guarded to pull_request (`if: github.event_name == 'pull_request'`) running `pnpm exec commitlint --from "$BASE" --to "$HEAD" --verbose`. Tests keep running on PRs as today — this suite is small, and the house fast/full split exists for suite sizes this repo does not have.
 - **Covers AE3.** The commitlint step runs on `pull_request` events regardless of which paths changed — the reusable workflow linting docs-only PRs' squash messages is the convention being copied.
 - **Test expectation:** none — workflow file; exercised only by a push (off-host).
 - **Verification:** structural review against the reusable workflow's conventions; the first push reports the CI verdict (recorded in the PR).
 
 ### U7. Repoint package metadata
 
-- **Goal:** metadata names the maintaining fork (R6; KD8).
+- **Goal:** metadata names the maintaining fork, and the development floor is documented (R6; KD5, KD8).
 - **Requirements:** R6. **Dependencies:** none (placed last).
-- **Files:** `package.json`.
-- **Approach:** `repository.url`, `bugs`, `homepage` → `systemfsoftware/drizzle-pg-extras`; nothing else moves — license stays MIT, engines stays >=18.
-- **Test expectation:** none — metadata.
-- **Verification:** the three fields resolve to the fork (a `node -e` read of `package.json`).
+- **Files:** `package.json`, `README.md`.
+- **Approach:** `repository.url`, `bugs`, `homepage` → `systemfsoftware/drizzle-pg-extras`; nothing else moves in `package.json` — license stays MIT, engines stays >=18. The README gains a one-line development note: Node >=22 to develop, Node >=18 supported for consumers (KD5) — `engines` itself is not touched.
+- **Test expectation:** none — metadata and documentation.
+- **Verification:** the three fields resolve to the fork (a `node -e` read of `package.json`); the README carries the contributor floor.
 
 ---
 
@@ -245,7 +244,8 @@ The work ships as one PR: U1 through U6 in dependency order, U7 (metadata) indep
 | Install | `pnpm install --frozen-lockfile` | U1, all | lockfile resolves; no `package-lock.json` |
 | Build parity | `pnpm build` | U2 | `dist/index.js`, `index.cjs`, `index.d.ts`, `index.d.cts`, `cli.js` + sourcemaps; `cli.js` starts with `#!/usr/bin/env node` |
 | Typecheck | `pnpm typecheck` | U2, U4 | exit 0 |
-| Lint | `pnpm lint` | U3 | exit 0 |
+| Lint | `pnpm lint` | U3 | exit 0 with the preset's active rule count shown (or a seeded violation caught) |
+| Export surface | `pnpm exec attw --pack .` && `pnpm exec publint` | U2 | no type-resolution or export-map problems in the dual-format output |
 | Format | `pnpm format:check` | U4 | exit 0 |
 | Unit tests | `pnpm exec vitest run tests/unit` | U2, U4 (behavior preserved) | green, no test edits needed |
 | Integration tests | `pnpm exec vitest run tests/integration` with `POSTGRES_URL`; `TIMESCALE_URL` for the timescale file | U2, U4 | green (this package's own tests only) |
