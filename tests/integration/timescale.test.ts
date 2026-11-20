@@ -70,12 +70,21 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       )
       expect(schedule.rows[0]?.matches).toBe(true)
 
-      await client.query(`INSERT INTO metrics (time, device_id, value) VALUES ('2024-06-01', 'device-a', 1)`)
+      await client.query(
+        `INSERT INTO metrics (time, device_id, value) VALUES (now(), 'device-a', 1), (now() - INTERVAL '3 days', 'device-b', 2)`,
+      )
       const inserted = await client.query<{ chunks: string }>(
         `SELECT count(*)::text AS chunks FROM timescaledb_information.chunks
          WHERE hypertable_schema = 'public' AND hypertable_name = 'metrics'`,
       )
       expect(Number(inserted.rows[0]?.chunks)).toBeGreaterThan(0)
+
+      await client.query(
+        `SELECT compress_chunk(chunk, if_not_compressed => TRUE)
+         FROM show_chunks('public.metrics'::regclass, older_than => now() - INTERVAL '2 days') AS chunk`,
+      )
+      expect(await compressedChunkCount(client, 'public', 'metrics')).toBe(1)
+      expect(await chunkCount(client, 'public', 'metrics')).toBe(2)
 
       const before = sqlFiles(path.join(dir, 'drizzle'))
       const again = kitExec(dir, ['generate', '--name', 'noop', '--config', 'drizzle.config.ts'])
@@ -126,6 +135,11 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
 
       await runStatements(client, readFileSync(migrationFile(path.join(dir, 'drizzle'), 'hypertables', 'down'), 'utf8'))
       expect(await compressionEnabled(client, 'public', 'metrics')).toBe(false)
+      expect(await compressedChunkCount(client, 'public', 'metrics')).toBe(0)
+      const kept = await client.query<{ device_id: string; value: number }>(
+        `SELECT device_id, value FROM metrics ORDER BY value`,
+      )
+      expect(kept.rows).toEqual([{ device_id: 'device-a', value: 1 }, { device_id: 'device-b', value: 2 }])
       const jobs = await client.query(`SELECT 1 FROM timescaledb_information.jobs WHERE hypertable_name = 'metrics'`)
       expect(jobs.rowCount).toBe(0)
       const still = await client.query(
@@ -284,6 +298,24 @@ async function compressionEnabled(client: pg.Client, schema: string, table: stri
     [schema, table],
   )
   return result.rows[0]?.compression_enabled === true
+}
+
+async function chunkCount(client: pg.Client, schema: string, table: string): Promise<number> {
+  const result = await client.query<{ chunks: string }>(
+    `SELECT count(*)::text AS chunks FROM timescaledb_information.chunks
+     WHERE hypertable_schema = $1 AND hypertable_name = $2`,
+    [schema, table],
+  )
+  return Number(result.rows[0]?.chunks)
+}
+
+async function compressedChunkCount(client: pg.Client, schema: string, table: string): Promise<number> {
+  const result = await client.query<{ chunks: string }>(
+    `SELECT count(*)::text AS chunks FROM timescaledb_information.chunks
+     WHERE hypertable_schema = $1 AND hypertable_name = $2 AND is_compressed`,
+    [schema, table],
+  )
+  return Number(result.rows[0]?.chunks)
 }
 
 async function policyInterval(

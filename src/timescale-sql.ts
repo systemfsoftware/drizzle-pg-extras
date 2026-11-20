@@ -61,9 +61,15 @@ export function enableHypertableCompressionSql(
 }
 
 export function disableHypertableCompressionSql(ht: Pick<HypertableSnapshot, 'schema' | 'name'>): string {
-  return `-- Turn compression off on ${qualify(ht.schema, ht.name)}.\nALTER TABLE ${
+  return `-- Turn compression off on ${
     qualify(ht.schema, ht.name)
-  } SET (timescaledb.compress = false);`
+  }. TimescaleDB refuses while any chunk is compressed, so decompress them first. The table lock keeps a concurrent compress_chunk from undoing that before the ALTER.\nDO $drizzle_pg_extras$\nBEGIN\n  LOCK TABLE ${
+    qualify(ht.schema, ht.name)
+  } IN ACCESS EXCLUSIVE MODE;\n  PERFORM decompress_chunk(chunk, if_compressed => TRUE) FROM show_chunks(${
+    relation(ht)
+  }) AS chunk;\n  ALTER TABLE ${
+    qualify(ht.schema, ht.name)
+  } SET (timescaledb.compress = false);\nEND\n$drizzle_pg_extras$;`
 }
 
 export function addRetentionPolicySql(ht: HypertableSnapshot): string {
