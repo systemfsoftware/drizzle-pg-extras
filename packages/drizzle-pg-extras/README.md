@@ -21,8 +21,8 @@ Smaller packages already cover one of those pieces each: [`drizzle-triggers`](ht
 ## Example
 
 ```ts
+import { pgExtension, updatedAtTrigger, withComment } from '@systemfsoftware/drizzle-pg-extras'
 import { pgTable, serial, text, timestamp } from 'drizzle-orm/pg-core'
-import { pgExtension, updatedAtTrigger, withComment } from 'drizzle-pg-extras'
 
 export const pgcrypto = pgExtension('pgcrypto')
 
@@ -68,7 +68,7 @@ The first `generate` writes a migration. The next one writes nothing until a def
 ## Install
 
 ```sh
-npm install drizzle-pg-extras
+npm install @systemfsoftware/drizzle-pg-extras
 ```
 
 Peer dependency: `drizzle-orm` `>=0.36.4`, including 1.0 (tested with 0.45 and `1.0.0-rc.5`). `drizzle-kit` `>=0.31.0` or 1.0 is optional and only needed to apply migrations. Node.js 18 or newer.
@@ -123,7 +123,14 @@ drizzle/
 ## Programmatic API
 
 ```ts
-import { defineExtras, generate, pgExtension, pgFunction, pgTrigger, renderIdempotent } from 'drizzle-pg-extras'
+import {
+  defineExtras,
+  generate,
+  pgExtension,
+  pgFunction,
+  pgTrigger,
+  renderIdempotent,
+} from '@systemfsoftware/drizzle-pg-extras'
 
 const extras = defineExtras({
   extensions: [pgExtension('vector', { schema: 'extensions' })],
@@ -162,9 +169,9 @@ A function's identity is `schema.name(arg types)`. Two overloads can coexist. A 
 Comments that disappear become `COMMENT … IS NULL`. If the table, column, enum, view, index, or constraint also left the schema, the null comment is omitted: drizzle-kit's migration drops the comment with the object. The same omission applies when this package drops the function, trigger, or extension in the same file. Removing a column that a trigger's `UPDATE OF` or `WHEN` still references takes two generates: change the trigger first, then drop the column. Postgres will not drop the column while the trigger depends on it.
 
 ```ts
+import { pgFunction, withComment } from '@systemfsoftware/drizzle-pg-extras'
 import { sql } from 'drizzle-orm'
 import { check, index, pgEnum, pgTable, pgView, serial, text, unique } from 'drizzle-orm/pg-core'
-import { pgFunction, withComment } from 'drizzle-pg-extras'
 
 export const role = withComment(pgEnum('user_role', ['admin', 'member']), 'Account role')
 
@@ -277,8 +284,8 @@ Postgres accepts `PARTITION BY` only on `CREATE TABLE`. There is no `ALTER TABLE
 The tradeoff is that conversion is a rebuild, not a flag. It is safe on an empty table and refused on a table that already has data. A helper that emitted the parent `CREATE TABLE` itself would avoid the rebuild, but then the table would have to stay out of drizzle-kit or kit would create it a second time, and this package would have to own later column changes. Keeping the table in the Drizzle schema is the point of fitting the rest of this package.
 
 ```ts
+import { partitionedTable, pgAttachPartition, pgPartition } from '@systemfsoftware/drizzle-pg-extras'
 import { integer, pgTable, primaryKey, serial, text, timestamp } from 'drizzle-orm/pg-core'
-import { partitionedTable, pgAttachPartition, pgPartition } from 'drizzle-pg-extras'
 
 export const events = pgTable('events', {
   id: serial('id').notNull(),
@@ -356,8 +363,8 @@ The table stays in the Drizzle schema, so drizzle-kit still owns columns, indexe
 `pgExtension("timescaledb")` has to be exported from the schema. `generate` throws if it is missing, and it writes `CREATE EXTENSION` before `create_hypertable` when both are new. A hypertable does not need the extension before the table: drizzle-kit creates an ordinary table, then this migration converts it. Run `drizzle-kit generate`, then `drizzle-pg-extras generate`, then `drizzle-kit migrate`, and load data after that.
 
 ```ts
+import { hypertable, pgExtension } from '@systemfsoftware/drizzle-pg-extras'
 import { integer, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core'
-import { hypertable, pgExtension } from 'drizzle-pg-extras'
 
 export const timescale = pgExtension('timescaledb')
 
