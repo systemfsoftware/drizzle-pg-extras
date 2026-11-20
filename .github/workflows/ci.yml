@@ -120,7 +120,7 @@ jobs:
           cache: pnpm
       # The rc install mutates this job's own dependency tree only (KTD3); this job runs tests only,
       # so the mutation never feeds a static check — those run once, on the frozen lockfile.
-      - run: pnpm install --frozen-lockfile && pnpm add -D --filter @systemfsoftware/drizzle-pg-extras drizzle-orm@rc drizzle-kit@rc
+      - run: pnpm install --frozen-lockfile && pnpm add -D --filter @systemfsoftware/drizzle-pg-extras drizzle-orm@1.0.0-rc.5 drizzle-kit@1.0.0-rc.5
       - run: pnpm test
         env:
           POSTGRES_URL: postgres://extras:extras@localhost:5432/drizzle_pg_extras
