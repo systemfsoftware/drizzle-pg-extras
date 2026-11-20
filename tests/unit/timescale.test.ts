@@ -64,6 +64,11 @@ describe('hypertable sql', () => {
     expect(up.indexOf('timescaledb.compress')).toBeLessThan(up.indexOf('add_compression_policy'))
     const down = diff.down.join('\n')
     expect(down.indexOf('remove_compression_policy')).toBeLessThan(down.indexOf('timescaledb.compress = false'))
+    expect(down).toContain('decompress_chunk')
+    expect(down).toContain('remove_compression_policy')
+    expect(down.indexOf('remove_compression_policy')).toBeLessThan(down.indexOf('LOCK TABLE'))
+    expect(down.indexOf('LOCK TABLE')).toBeLessThan(down.indexOf('decompress_chunk'))
+    expect(down.indexOf('decompress_chunk')).toBeLessThan(down.indexOf('timescaledb.compress = false'))
     expect(down).toContain('remove_retention_policy')
     expect(down).toContain('stays a hypertable')
     expect(down).not.toContain('DROP EXTENSION')
@@ -141,6 +146,14 @@ describe('hypertable sql', () => {
     expect(changed.indexOf('remove_retention_policy')).toBeLessThan(
       changed.indexOf("drop_after => INTERVAL '3 months'"),
     )
+
+    const dropped = snapshotExtras(defineExtras({
+      extensions: [pgExtension('timescaledb')],
+      hypertables: [hypertable(metrics, { timeColumn: metrics.time, chunkTimeInterval: '1 day' })],
+    }))
+    const off = diffSnapshots(compressed, dropped).up.join('\n')
+    expect(off.indexOf('remove_compression_policy')).toBeLessThan(off.indexOf('decompress_chunk'))
+    expect(off.indexOf('decompress_chunk')).toBeLessThan(off.indexOf('timescaledb.compress = false'))
   })
 
   it('applies snake_case and qualifies a non-public schema', () => {
