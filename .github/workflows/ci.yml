@@ -9,6 +9,7 @@ on:
   pull_request:
     # `edited` re-runs the squash-message lint when the title or body changes without a push.
     types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -40,8 +41,8 @@ jobs:
       - run: pnpm typecheck
       # attw and publint guard the built dual-format output, so the build precedes them.
       - run: pnpm build
-      - run: pnpm exec attw --pack .
-      - run: pnpm exec publint
+      - run: pnpm --filter @systemfsoftware/drizzle-pg-extras exec attw --pack .
+      - run: pnpm --filter @systemfsoftware/drizzle-pg-extras exec publint
       # A Mergify queue draft is a pull request titled "merge queue: ...", which commitlint rejects; the pull request
       # itself is still linted.
       - if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'mergify/merge-queue/')
@@ -119,7 +120,7 @@ jobs:
           cache: pnpm
       # The rc install mutates this job's own dependency tree only (KTD3); this job runs tests only,
       # so the mutation never feeds a static check — those run once, on the frozen lockfile.
-      - run: pnpm install --frozen-lockfile && pnpm add -D drizzle-orm@rc drizzle-kit@rc
+      - run: pnpm install --frozen-lockfile && pnpm add -D --filter @systemfsoftware/drizzle-pg-extras drizzle-orm@rc drizzle-kit@rc
       - run: pnpm test
         env:
           POSTGRES_URL: postgres://extras:extras@localhost:5432/drizzle_pg_extras
