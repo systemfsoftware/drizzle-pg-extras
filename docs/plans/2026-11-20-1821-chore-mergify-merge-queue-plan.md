@@ -10,11 +10,11 @@ execution: code
 
 ## Goal Capsule
 
-- **Objective:** An approved pull request on this repository merges to `main` without a human pressing merge, and only after its CI jobs pass both on the pull request and on the merge queue's temporary draft.
-- **Means:** One Mergify queue declared in `.mergify.yml` (KTD1-KTD4), plus a one-line CI guard so the queue's draft can pass `static checks` (KTD5).
-- **Authority:** The request and Mergify's published configuration docs. Check names come from `.github/workflows/ci.yml`.
+- **Objective:** An approved pull request on this repository merges to `main` without a human pressing merge, only after every CI job has passed, the same way it does in the organisation's other public repositories.
+- **Means:** The organisation's thin `.mergify.yml`, copied unchanged (KTD1), and one aggregate CI job named `checks / check` that depends on every other job (KTD2).
+- **Authority:** The owner's ruling to match the other open-source repositories, then the organisation's shared Mergify policy and its README, read from the organisation's `.github` repository. This plan supersedes the earlier standalone design.
 - **Stop conditions:** This repository is public. No repository settings, visibility, or rulesets change. No private names, ids, paths, or hosts appear in any file, commit, or PR text.
-- **Execution profile:** One PR with U1-U2. This run writes and commits the plan only; nothing is pushed.
+- **Execution profile:** One PR with U1-U3. The plan is committed on its own; nothing is pushed from this run.
 
 ---
 
@@ -22,36 +22,34 @@ execution: code
 
 ### Summary
 
-Add `.mergify.yml` with a single queue named `default`. Approved, non-draft pull requests with green CI are queued automatically and squash-merged with the PR title and body as the commit message. The approving bot may also issue `queue` and `requeue` commands.
+Add the shared thin `.mergify.yml` and give `ci.yml` one aggregate job, `checks / check`, that succeeds only when every other job succeeded. The organisation policy supplies the approval gate, auto-queueing, command restrictions, and queue defaults; this repository declares only its two queues, both gated on the aggregate check.
 
 ### Problem Frame
 
-Merging is manual today. Mergify reads its configuration from the default branch only, so the file has to land on `main` before anything is queued. The CI workflow also lints the pull request title and body, which a Mergify draft pull request cannot satisfy as written (KTD5).
+Merging is manual today, and this repository is the odd one out: the other public repositories extend one organisation policy and gate on a single check named `checks / check`. In those repositories the check comes from a shared reusable workflow, which runs everything inside a Nix dev shell and has no service containers. This repository's tests need Postgres and TimescaleDB services, so its CI stays repo-owned (decided in `docs/plans/2026-11-20-0349-chore-systemfsoftware-tooling-plan.md`, KD7). It therefore has to produce the same check name itself. Mergify's queue draft also fails this repository's squash-message lint as written (KTD3).
 
 ### Requirements
 
-**Queue behavior**
+**Mergify configuration**
 
-- R1. One queue rule, `merge_method: squash`, commit title and body taken from the PR title and body.
-- R2. A PR is queued automatically when it is not a draft, is approved by `kiro-systemf[bot]`, has no change request, and every CI job passes.
-- R3. `merge_conditions` require the same CI jobs on the queue draft.
-- R4. The CI jobs are every check in `.github/workflows/ci.yml`, matrix entries included:
-  - `static checks`
-  - `test (node 22, drizzle 0.x)`
-  - `test (node 24, drizzle 0.x)`
-  - `test (node 24, drizzle 1.0-rc)`
-  - `test (timescaledb 2.32)`
+- R1. `.mergify.yml` is byte-identical to the file the organisation's other public repositories use: `extends: .github`, plus a `subtree` queue and a `default` queue.
+- R2. Both queues require `check-success = checks / check` in `queue_conditions` and `merge_conditions`. The approval gate, change-request rule, auto-queueing, `queue` and `requeue` command restrictions, and queue defaults are inherited from the organisation policy and not redeclared.
 
-**Access and scope**
+**CI**
 
-- R5. `kiro-systemf[bot]` may run `queue` and `requeue`; anyone with write permission keeps that right.
-- R6. Minimal: no priority rules, no batching, no other keys.
-- R7. The file is validated against Mergify's schema if a copy is available offline; otherwise the PR says it was not validated.
+- R3. CI exposes a check named exactly `checks / check` on both `pull_request` and `push` events.
+- R4. `checks / check` succeeds only when all four existing jobs succeed: `static checks`, `test (node ${{ matrix.node }}, drizzle 0.x)` for node 22 and 24, `test (node 24, drizzle 1.0-rc)`, and `test (timescaledb 2.32)`. It reports failure when any of them fails, is cancelled, or is skipped.
+- R5. `static checks` passes on a Mergify queue draft, whose title the squash-message lint cannot accept.
+
+**Boundaries**
+
+- R6. The Mergify file is validated against Mergify's schema if a copy is available offline; otherwise the PR says it was not validated.
 
 ### Scope Boundaries
 
-- Not built: priority rules, batching, `dequeue` restrictions, labels, `shared` anchors.
+- Not built: a local approval gate, command restrictions, priority rules, batching, labels. The organisation policy owns them.
 - Not changed: repository settings, branch protection, rulesets, Mergify account settings.
+- Not adopted: calling the shared reusable CI workflow (Problem Frame).
 
 ---
 
@@ -59,49 +57,61 @@ Merging is manual today. Mergify reads its configuration from the default branch
 
 ### Key Technical Decisions
 
-- KTD1. **Auto-queue through `merge_protections_settings.auto_merge_conditions: true`**, not a `pull_request_rules` entry with a `queue` action. The docs name it the current mechanism, it adds no rule list, and the queue's `queue_conditions` still gate entry. It requires Merge Protections to be enabled for the repository (Risks).
-- KTD2. **`queue_conditions` carries the review and CI gates; `merge_conditions` carries the CI gates only.** Because the two lists differ, Mergify checks each PR on a draft pull request, which is what R3 asks for. Review state is not re-evaluated on the draft.
-  - `queue_conditions`: `-draft`, `approved-reviews-by = kiro-systemf[bot]`, `#changes-requested-reviews-by = 0`, then one `check-success = <name>` per R4 entry.
-  - `merge_conditions`: the same five `check-success` lines.
-- KTD3. **`commit_message_format` with `title: pr-title` and `body: pr-body`**, not the deprecated `commit_message_template`. Mergify appends ` (#N)` to the title, matching the existing history.
-- KTD4. **`commands_restrictions` for `queue` and `requeue`** replaces the default `sender-permission >= write` with `or: [sender-permission >= write, sender = kiro-systemf[bot]]`, so the write path survives.
-- KTD5. **Skip the squash-message lint on queue drafts.** Mergify names the draft `merge queue: embarking main (<sha>) and #N together` on a `mergify/merge-queue/` branch. The `Lint the squash message` step in `static checks` would fail it, so `static checks` would never go green on the draft and every PR would time out of the queue. The step gains a head-ref guard. The real PR is still linted, and its `static checks` success is a queue condition, so the squash message stays covered.
-- KTD6. **Bare check names**, not `@github-actions/<name>`. Only GitHub Actions publishes these checks here; qualifying them is extra surface.
+- KTD1. **Copy the organisation's `.mergify.yml` verbatim.** It carries a `subtree` queue although this repository has no subtrees; identical content is the convention. (session-settled: user-directed — chosen over a standalone queue file with a local approval gate and command restrictions: owner ruling "be consistent with our other open-source repos".) Governs R1, R2.
+- KTD2. **A plain job `check` with `name: checks / check` and `needs` on all four jobs.** A caller job `checks` that uses the shared workflow's job `check` publishes the check name `checks / check`; a job named that string publishes the same name, and Mergify matches on the name. The job runs whatever its dependencies did and fails unless every dependency's result is `success`. It needs no checkout and no setup. Governs R3, R4.
+- KTD3. **Skip the squash-message lint on queue drafts with the head-ref test the shared reusable workflow uses**: the pull request's head branch starts with `mergify/merge-queue/`. Mergify titles its draft `merge queue: embarking main (<sha>) and #N together`, which commitlint rejects, so `static checks` would never pass on a draft. The real PR is still linted and its aggregate check is a queue condition. Governs R5.
+- KTD4. **Job names stay as they are.** The queue gates only on the aggregate, so the five names no longer appear in Mergify configuration and cannot drift against it.
 
 ### Risks and Dependencies
 
-- **Bot approval may not count.** Mergify documents that `approved-reviews-by` matches only reviewers with write, maintain, or admin permission, and the request notes an App lacks write permission. If so, R2 never matches. This cannot be checked offline. The first PR's Mergify check summary shows whether the condition is satisfied. Fixing it needs a repository or Mergify setting change, which is outside this task, so it is reported rather than worked around.
-- **Mergify prerequisites.** The Mergify app, Merge Queue, and Merge Protections must be enabled for the repository; squash merges must be allowed. None is visible from the repository.
-- **Check-name drift.** The five names in `.mergify.yml` duplicate job names in `ci.yml`. Renaming a job leaves its condition unsatisfiable until the queue's checks timeout.
-- **Bootstrap.** Mergify reads configuration from `main`, so the PR that adds the file merges by hand, not through the queue.
+- **Squash message source.** The organisation file sets no `commit_message_format`, so the squash commit follows the repository's GitHub setting. Read through the API at planning time, this repository squashes with the commit or PR title and the commit messages, while the reference repository uses the PR title and the PR body. Until the owner aligns the setting, the squash commit need not match the title and body that CI lints. Changing repository settings is out of scope, so this is recorded as an open question and not worked around.
+- **Aggregate drift.** A job added to `ci.yml` later and left out of the aggregate's `needs` is not gated. The job carries a comment saying every job must be listed.
+- **Head-ref test can be spoofed.** A fork pull request can name its branch `mergify/merge-queue/...` and skip the squash-message lint. The shared reusable workflow has the same test, and the organisation's title protection still checks the title; the body stays unchecked. Accepted as the house convention.
+- **Prerequisites not visible from the repository.** The Mergify app must be active here with Merge Queue and Merge Protections, and the organisation's `.github` repository must stay readable. The other repositories show the setup works. Mergify reads configuration from `main`, so this PR merges by hand. The organisation policy requires the repository owner's approval for a PR that touches CI or Mergify configuration, which this one does.
+
+### Open Questions
+
+**Deferred**
+
+- Should the owner set the repository's squash defaults to PR title and PR body to match the other repositories? Merging works either way. Until it is set, the squash commit text can differ from the linted PR title and body.
 
 ---
 
 ## Implementation Units
 
-### U1. Add the Mergify configuration
+### U1. Add the shared Mergify configuration
 
-- **Goal:** `.mergify.yml` implements R1-R6 as KTD1-KTD4 and KTD6 describe.
-- **Requirements:** R1-R7.
-- **Dependencies:** none.
+- **Goal:** `.mergify.yml` is the organisation's thin file (R1, R2; KTD1).
+- **Requirements:** R1, R2, R6.
+- **Dependencies:** U3, so the check it names exists when the file lands.
 - **Files:** `.mergify.yml` (new).
-- **Approach:**
-  - Top-level keys: `merge_protections_settings`, `queue_rules` (one rule, `default`), `commands_restrictions`.
-  - Set `merge_method: squash` and `commit_message_format` on the rule.
-  - Quote every condition that contains `#`, parentheses, or commas, such as `"check-success = test (node 22, drizzle 0.x)"`.
-  - Copy check names from `ci.yml` job `name:` fields, expanding the node matrix to 22 and 24.
-- **Test expectation:** none -- declarative config; verified by the checks below.
-- **Verification:** see Verification Contract.
+- **Approach:** Take the file from one of the organisation's public repositories (effect-daemon, effect-readiness, npm-package, discern, effect-microvm, rx-effect, hex-schema and effect-e2e held one identical copy at planning time) and add it unchanged. Do not reformat it; if the formatter rewrites it, exclude the file from formatting rather than edit it.
+- **Test expectation:** none -- declarative config; verified by comparison with the sibling copy.
+- **Verification:** The file is identical to the sibling copy (checksum match). Schema check per the Verification Contract.
 
 ### U2. Keep queue drafts from failing the squash-message lint
 
-- **Goal:** `static checks` succeeds on a Mergify queue draft (KTD5).
-- **Requirements:** R3.
+- **Goal:** `static checks` succeeds on a Mergify queue draft (KTD3; R5).
+- **Requirements:** R5.
 - **Dependencies:** none.
 - **Files:** `.github/workflows/ci.yml`.
-- **Approach:** Extend the `if:` of the `Lint the squash message` step with a clause excluding heads that start with `mergify/merge-queue/`. Leave every other step and trigger unchanged. Update the header comment of the workflow's lint sentence only if it becomes inaccurate.
-- **Test expectation:** none -- workflow config; it can only be exercised by a real queue run (Verification Contract).
-- **Verification:** The step still runs on ordinary pull requests and is skipped on a `mergify/merge-queue/` head.
+- **Approach:** Extend the `if:` of the `Lint the squash message` step so it also requires the head branch not to start with `mergify/merge-queue/`. Leave every other step unchanged.
+- **Test expectation:** none -- workflow config; exercised only by a real queue run (Verification Contract).
+- **Verification:** The step still runs on an ordinary pull request and is skipped on a `mergify/merge-queue/` head.
+
+### U3. Add the aggregate `checks / check` job
+
+- **Goal:** One check, `checks / check`, that is green only when every other job is green (KTD2; R3, R4).
+- **Requirements:** R3, R4.
+- **Dependencies:** none.
+- **Files:** `.github/workflows/ci.yml`.
+- **Approach:**
+  - Add a job `check` with `name: checks / check` and `needs` listing `static-checks`, `test`, `test-rc`, and `timescale`.
+  - Give it a run condition that holds when a dependency failed, so a red dependency produces a red aggregate and not a missing one.
+  - One step fails unless every dependency's result is `success`.
+  - Add the comment about listing every job (Risks), and update the workflow's header comment to mention the aggregate.
+- **Test expectation:** none -- workflow config; exercised only by CI runs (Verification Contract).
+- **Verification:** On a pull request, `checks / check` appears in the check list and turns green only after the four jobs finish green.
 
 ---
 
@@ -109,16 +119,16 @@ Merging is manual today. Mergify reads its configuration from the default branch
 
 | Check | Applies to | Command or evidence |
 | --- | --- | --- |
-| YAML and formatting | U1 | `pnpm format:check` (dprint covers YAML) |
-| Check names match CI | U1 | Compare the five `check-success` values to the `name:` fields in `.github/workflows/ci.yml`; matrix expands to node 22 and 24 |
-| Schema | U1 | Search for a local Mergify CLI or schema copy (`mergify config validate`, `mergify-configuration-schema.json`). None was found at planning time: no `mergify` binary, no copy in the repository. Validate if one exists; otherwise state in the PR that the file was not schema-validated. Do not fetch the schema online. |
-| Lint skip | U2 | `pnpm format:check`; read the changed `if:` for the two cases (ordinary PR head, `mergify/merge-queue/` head) |
-| Live behavior | U1, U2 | Pending, off-host: Mergify's configuration check on the PR, then the first queued PR's Mergify check summary (bot approval counts, draft CI green, squash message) |
+| Formatting | U2, U3 | `pnpm format:check` |
+| Config identical to the organisation's | U1 | Compare `.mergify.yml` with a sibling repository's copy at implementation time; checksums match |
+| Schema | U1 | Look for a local Mergify CLI or schema copy (`mergify config validate`). None was found at planning time: no `mergify` binary, no copy in the repository. The file cannot be validated offline in any case, since it extends another repository's file. Validate if possible; otherwise say in the PR that it was not validated. |
+| Aggregate wiring | U3 | Read the job: `needs` lists all four jobs, it runs after a failed dependency, and it fails on any result other than `success` |
+| Live behavior | U1-U3 | Pending, off-host: Mergify's configuration check on the PR, a green `checks / check` on the PR, then the first queued PR's Mergify summary (draft CI green, lint skipped, squash message) |
 
 ## Definition of Done
 
-- `.mergify.yml` contains one queue and nothing the Requirements exclude.
-- All five CI check names appear in both `queue_conditions` and `merge_conditions`.
-- The squash-message lint step is skipped only on `mergify/merge-queue/` heads.
-- The PR text states the schema-validation result, the bot-approval risk, and that the live queue run is pending.
+- `.mergify.yml` matches the organisation's file exactly and declares no local approval or command rules.
+- `ci.yml` publishes `checks / check`, which depends on all four jobs and fails when any of them does not succeed.
+- The squash-message lint is skipped only when the head branch starts with `mergify/merge-queue/`.
+- The PR text states the schema-validation result, the squash-defaults open question, the owner-approval requirement, and that the live queue run is pending.
 - No private name, id, path, or host appears in any changed file, commit, or PR text.
