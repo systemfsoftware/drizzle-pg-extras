@@ -32,7 +32,7 @@ The repository today is one package at the root, with no flake, no release confi
 
 ### Requirements
 
-- R0. Issue YOU-1998: drizzle-pg-extras publishes to npm through systemfsoftware/pnpm-release-management by trusted publishing (OIDC), so Younna can depend on it.
+- R0. If this unit fixed a defect or solved a problem whose cause no file in the diff already explains, the PR adds a `docs/solutions/` file that names that cause and where it lives by package and exported symbol (not a line number or code path, which rot); a file that only restates the PR title does not meet this.
 
 **Name and layout**
 
