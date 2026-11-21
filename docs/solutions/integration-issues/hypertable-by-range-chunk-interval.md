@@ -25,7 +25,7 @@ tags:
 
 ## Problem
 
-The generated hypertable migration combined the generalized dimension constructor `by_range('time'::name)` with the legacy named argument `chunk_time_interval => INTERVAL '1 day'`. TimescaleDB 2.32 has no `create_hypertable` overload that accepts a dimension descriptor and the legacy chunk-interval argument together, so the migration failed before creating the hypertable. Unit tests passed because they asserted the generated text, not the server grammar.
+In `@systemfsoftware/drizzle-pg-extras`, the exported `createHypertableSql` renderer — the package's hypertable SQL renderer — generated a migration that combined the generalized dimension constructor `by_range('time'::name)` with the legacy named argument `chunk_time_interval => INTERVAL '1 day'`. TimescaleDB 2.32 has no `create_hypertable` overload that accepts a dimension descriptor and the legacy chunk-interval argument together, so the migration failed before creating the hypertable. Unit tests passed because they asserted the generated text, not the server grammar.
 
 ## Mechanism
 
