@@ -29,19 +29,28 @@ import {
 } from './statements.js'
 import {
   addColumnstorePolicySql,
+  addContinuousAggregateColumnstorePolicySql,
+  addContinuousAggregateRefreshPoliciesSql,
+  addContinuousAggregateRetentionPolicySql,
   addHypertableDimensionSql,
   addRetentionPolicySql,
   alterContinuousAggregateChunkIntervalSql,
   alterContinuousAggregateRealTimeSql,
-  createContinuousAggregateSql,
+  createContinuousAggregateStatements,
   createHypertableStatements,
+  disableContinuousAggregateColumnstoreSql,
   disableHypertableColumnstoreSql,
   dropContinuousAggregateSql,
+  enableContinuousAggregateColumnstoreSql,
   enableHypertableColumnstoreSql,
   leaveChunkIntervalSql,
   leaveHypertableDimensionSql,
   leaveHypertableSql,
   removeColumnstorePolicySql,
+  removeContinuousAggregateColumnstorePolicySql,
+  removeContinuousAggregatePolicies,
+  removeContinuousAggregateRefreshPolicySql,
+  removeContinuousAggregateRetentionPolicySql,
   removeRetentionPolicySql,
   setChunkTimeIntervalSql,
 } from './timescale-sql.js'
@@ -72,7 +81,7 @@ export function idempotentStatements(snapshot: Snapshot): string[] {
   statements.push(...partitionStatements(snapshot))
   for (const hypertable of snapshot.hypertables) statements.push(...createHypertableStatements(hypertable))
   for (const aggregate of orderedContinuousAggregates(snapshot.continuousAggregates)) {
-    statements.push(createContinuousAggregateSql(aggregate))
+    statements.push(...createContinuousAggregateStatements(aggregate))
   }
   for (const comment of snapshot.comments) {
     if (comment.kind !== 'trigger') statements.push(commentSql(comment, comment.text))
@@ -443,6 +452,25 @@ function continuousAggregateChanges(
       }
       alters.push(alterContinuousAggregateChunkIntervalSql(next))
     }
+    if (JSON.stringify(prev.refreshPolicies) !== JSON.stringify(next.refreshPolicies)) {
+      if (prev.refreshPolicies.length > 0) alters.push(removeContinuousAggregateRefreshPolicySql(prev))
+      alters.push(...addContinuousAggregateRefreshPoliciesSql(next))
+    }
+    if (JSON.stringify(prev.columnstore) !== JSON.stringify(next.columnstore)) {
+      if (next.columnstore) {
+        alters.push(enableContinuousAggregateColumnstoreSql(next, next.columnstore))
+      } else {
+        alters.push(disableContinuousAggregateColumnstoreSql(next))
+      }
+    }
+    if (JSON.stringify(prev.columnstorePolicy) !== JSON.stringify(next.columnstorePolicy)) {
+      if (prev.columnstorePolicy) alters.push(removeContinuousAggregateColumnstorePolicySql(prev))
+      if (next.columnstorePolicy) alters.push(addContinuousAggregateColumnstorePolicySql(next))
+    }
+    if (JSON.stringify(prev.retention) !== JSON.stringify(next.retention)) {
+      if (prev.retention) alters.push(removeContinuousAggregateRetentionPolicySql(prev))
+      if (next.retention) alters.push(addContinuousAggregateRetentionPolicySql(next))
+    }
   }
 
   if (changedIds.size > 0) {
@@ -458,8 +486,14 @@ function continuousAggregateChanges(
     }
   }
 
-  const drop = [...orderedContinuousAggregates(removed)].reverse().map((item) => dropContinuousAggregateSql(item))
-  const write = [...orderedContinuousAggregates(creates).map((item) => createContinuousAggregateSql(item)), ...alters]
+  const drop = [...orderedContinuousAggregates(removed)].reverse().flatMap((item) => [
+    ...removeContinuousAggregatePolicies(item),
+    dropContinuousAggregateSql(item),
+  ])
+  const write = [
+    ...orderedContinuousAggregates(creates).flatMap((item) => createContinuousAggregateStatements(item)),
+    ...alters,
+  ]
   return { drop, write, rebuilt, dropped }
 }
 

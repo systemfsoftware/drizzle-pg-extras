@@ -300,6 +300,10 @@ export const metricsHourly = continuousAggregate(hourlyView, {
   query: \`SELECT time_bucket('1 hour', time) AS bucket, device_id, ${parentAggregate}(value) AS value FROM metrics GROUP BY bucket, device_id\`,
   source: metricsHypertable,
   chunkInterval: "1 hour",
+  refreshPolicies: [{ startOffset: "1 month", endOffset: "1 hour", scheduleInterval: "1 hour" }],
+  columnstore: { segmentBy: ["device_id"], orderBy: [{ column: "bucket", direction: "desc" }] },
+  columnstorePolicy: { after: "7 days" },
+  retention: { dropAfter: "6 months" },
 });
 
 const dailyView = pgMaterializedView("metrics_daily", {
