@@ -20,7 +20,10 @@ jobs:
     if: github.ref == 'refs/heads/main'
     uses: systemfsoftware/pnpm-release-management/.github/workflows/release.yml@9615867c17489fb04be8bc74f568659d687df612
     with:
-      ci-workflow: ci.yml
+      # The release PR changes only version surfaces, so its own tree is proved by the merge-queue draft's full CI.
+      # `release-checks.yml` reuses main's verdict for the base commit and lints the squash message instead of
+      # rebuilding the matrix for a version bump.
+      ci-workflow: release-checks.yml
       npm-publish: true
   noop:
     name: no release off main, so the run concludes success, not skipped
