@@ -102,6 +102,19 @@ FROM metrics GROUP BY time_bucket('1 hour', time), device_id`,
     )
     expect(alter).not.toContain('DROP MATERIALIZED VIEW')
     expect(alter).not.toContain('CREATE MATERIALIZED VIEW')
+
+    const chunked = continuousAggregate(viewOf('metrics_hourly'), {
+      query: `SELECT time_bucket('1 hour', time) AS bucket, device_id, avg(value) AS value
+FROM metrics GROUP BY time_bucket('1 hour', time), device_id`,
+      source: ht,
+      chunkInterval: '2 hours',
+    })
+    const chunkAlter = diffSnapshots(before, snapshotExtras(extras([chunked], table, ht))).up.join('\n')
+    expect(chunkAlter).toContain(
+      `ALTER MATERIALIZED VIEW "public"."metrics_hourly" SET (timescaledb.chunk_interval = '2 hours')`,
+    )
+    expect(chunkAlter).not.toContain('INTERVAL')
+    expect(chunkAlter).not.toContain('DROP MATERIALIZED VIEW')
   })
 
   it('rebuilds on a query change and refuses a parent change with a declared child', () => {
