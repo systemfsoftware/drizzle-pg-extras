@@ -89,6 +89,8 @@ Changing an aggregate's query has three possible mechanisms: refuse and leave th
 
 ### Requirements
 
+R0. If this unit fixed a defect or solved a problem whose cause no file in the diff already explains, the PR adds a `docs/solutions/` file that names that cause and where it lives by package and exported symbol (not a line number or code path, which rot); a file that only restates the PR title does not meet this.
+
 **Continuous aggregates**
 
 - R1. `continuousAggregate(name, config)` and `continuousAggregate(view, config)` are collected by `collectExtras()` and recorded in `_pg-extras.json`. A `view` must be a `pgMaterializedView(...).existing()`, and it supplies the name, schema, typed columns, and comment target; a non-existing view is rejected with an error that names `.existing()`.
