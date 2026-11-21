@@ -466,4 +466,4 @@ drizzle-pg-extras check [--config drizzle.config.ts]
 
 ## License
 
-MIT
+Apache-2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
