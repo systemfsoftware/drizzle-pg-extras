@@ -363,20 +363,20 @@ describe('hypertable definition checks', () => {
         timeColumn: metrics.time,
         columnstore: {},
         columnstorePolicy: {
-          createdBefore: '2024-01-01T00:00:00Z',
+          createdBefore: '1 year',
           scheduleInterval: '1 hour',
           initialStart: '2024-02-01T00:00:00Z',
           timezone: 'UTC',
         },
-        retention: { dropCreatedBefore: '2023-01-01T00:00:00Z' },
+        retention: { dropCreatedBefore: '2 years' },
       })],
     }))
     const up = diffSnapshots(emptySnapshot(), snap).up.join('\n')
     expect(up).toContain(
-      `CALL add_columnstore_policy('"public"."metrics"'::regclass, created_before => '2024-01-01T00:00:00Z'::timestamptz, schedule_interval => INTERVAL '1 hour', initial_start => '2024-02-01T00:00:00Z'::timestamptz, timezone => 'UTC', if_not_exists => TRUE);`,
+      `CALL add_columnstore_policy('"public"."metrics"'::regclass, created_before => INTERVAL '1 year', schedule_interval => INTERVAL '1 hour', initial_start => '2024-02-01T00:00:00Z'::timestamptz, timezone => 'UTC', if_not_exists => TRUE);`,
     )
     expect(up).toContain(
-      `SELECT add_retention_policy('"public"."metrics"'::regclass, drop_created_before => '2023-01-01T00:00:00Z'::timestamptz, if_not_exists => TRUE);`,
+      `SELECT add_retention_policy('"public"."metrics"'::regclass, drop_created_before => INTERVAL '2 years', if_not_exists => TRUE);`,
     )
   })
 
@@ -385,7 +385,7 @@ describe('hypertable definition checks', () => {
     expect(() =>
       hypertable(metrics, {
         timeColumn: metrics.time,
-        retention: { dropAfter: '1 day', dropCreatedBefore: '2024-01-01' },
+        retention: { dropAfter: '1 day', dropCreatedBefore: '1 year' },
       })
     ).toThrow(/exactly one/)
     expect(() =>
@@ -399,7 +399,7 @@ describe('hypertable definition checks', () => {
       hypertable(metrics, {
         timeColumn: metrics.time,
         columnstore: {},
-        columnstorePolicy: { after: '1 day', createdBefore: '2024-01-01' },
+        columnstorePolicy: { after: '1 day', createdBefore: '1 year' },
       })
     ).toThrow(/exactly one/)
   })

@@ -138,7 +138,7 @@ function retentionArgs(policy: HypertableRetentionSnapshot): string[] {
   const args = [
     policy.dropAfter !== null
       ? `drop_after => ${intervalLiteral(policy.dropAfter)}`
-      : `drop_created_before => ${timestampLiteral(policy.dropCreatedBefore ?? '')}`,
+      : `drop_created_before => ${intervalLiteral(policy.dropCreatedBefore ?? '')}`,
   ]
   timingArgs(policy, args)
   return args
@@ -148,7 +148,7 @@ function columnstorePolicyArgs(policy: HypertableColumnstorePolicySnapshot): str
   const args = [
     policy.after !== null
       ? `after => ${intervalLiteral(policy.after)}`
-      : `created_before => ${timestampLiteral(policy.createdBefore ?? '')}`,
+      : `created_before => ${intervalLiteral(policy.createdBefore ?? '')}`,
   ]
   timingArgs(policy, args)
   return args

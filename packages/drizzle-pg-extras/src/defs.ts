@@ -1582,10 +1582,10 @@ function readRetention(
     : normalizeInterval(retention.dropAfter, `${where} retention.dropAfter`)
   const dropCreatedBefore = retention.dropCreatedBefore === undefined
     ? null
-    : normalizeTimestamp(retention.dropCreatedBefore, `${where} retention.dropCreatedBefore`)
+    : normalizeInterval(retention.dropCreatedBefore, `${where} retention.dropCreatedBefore`)
   if ((dropAfter === null) === (dropCreatedBefore === null)) {
     throw new PgExtrasError(
-      `${where} retention requires exactly one of dropAfter or dropCreatedBefore, such as "6 months" or "2024-01-01T00:00:00Z"`,
+      `${where} retention requires exactly one of dropAfter or dropCreatedBefore, such as "6 months" or "1 year"`,
     )
   }
   return {
@@ -1602,10 +1602,10 @@ function readColumnstorePolicy(
   const after = policy.after === undefined ? null : normalizeInterval(policy.after, `${where} columnstorePolicy.after`)
   const createdBefore = policy.createdBefore === undefined
     ? null
-    : normalizeTimestamp(policy.createdBefore, `${where} columnstorePolicy.createdBefore`)
+    : normalizeInterval(policy.createdBefore, `${where} columnstorePolicy.createdBefore`)
   if ((after === null) === (createdBefore === null)) {
     throw new PgExtrasError(
-      `${where} columnstorePolicy requires exactly one of after or createdBefore, such as "7 days" or "2024-01-01T00:00:00Z"`,
+      `${where} columnstorePolicy requires exactly one of after or createdBefore, such as "7 days" or "1 year"`,
     )
   }
   return {
