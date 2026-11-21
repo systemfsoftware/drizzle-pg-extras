@@ -415,8 +415,8 @@ async function partitionsOf(client: pg.Client, schema: string, table: string, co
 
 async function columnstoreEnabled(client: pg.Client, schema: string, table: string): Promise<boolean> {
   const result = await client.query(
-    `SELECT 1 FROM timescaledb_information.hypertable_columnstore_settings
-     WHERE hypertable = format('%I.%I', $1::text, $2::text)::regclass`,
+    `SELECT 1 FROM timescaledb_information.hypertables
+     WHERE hypertable_schema = $1 AND hypertable_name = $2 AND compression_enabled`,
     [schema, table],
   )
   return (result.rowCount ?? 0) > 0
