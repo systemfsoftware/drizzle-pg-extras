@@ -450,6 +450,7 @@ FROM metrics GROUP BY bucket, device_id`,
 - `columnstore`, `columnstorePolicy` and `retention` work as on a hypertable.
 - A change to `query`, `source` or `createGroupIndexes` drops the aggregate and creates it again empty. `generate` throws when that aggregate is the source of another one: drop the child first, generate and migrate the parent change, then declare the child again.
 - Removing an aggregate and its source table in the same change throws. Remove the aggregate, generate and migrate, then remove the table.
+- To comment an aggregate with `withComment`, declare it with `pgView(...).existing()`. TimescaleDB accepts `COMMENT ON VIEW` for a continuous aggregate, and a `pgMaterializedView` would emit `COMMENT ON MATERIALIZED VIEW`.
 
 ## drizzle-kit push
 
