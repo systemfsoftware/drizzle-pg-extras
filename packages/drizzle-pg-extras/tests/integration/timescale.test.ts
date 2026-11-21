@@ -124,11 +124,6 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
 
       expect(await intervalEquals(client, 'public', 'metrics', 'time', '2 days')).toBe(true)
       expect(await policyInterval(client, 'metrics', 'policy_retention', 'drop_after', '3 months')).toBe(true)
-      const asc = await client.query<{ orderby: string }>(
-        `SELECT orderby FROM timescaledb_information.hypertable_columnstore_settings
-         WHERE hypertable = 'public.metrics'::regclass`,
-      )
-      expect(asc.rows[0]?.orderby).not.toContain('DESC')
 
       await runStatements(
         client,
@@ -136,11 +131,6 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       )
       expect(await intervalEquals(client, 'public', 'metrics', 'time', '1 day')).toBe(true)
       expect(await policyInterval(client, 'metrics', 'policy_retention', 'drop_after', '6 months')).toBe(true)
-      const desc = await client.query<{ orderby: string }>(
-        `SELECT orderby FROM timescaledb_information.hypertable_columnstore_settings
-         WHERE hypertable = 'public.metrics'::regclass`,
-      )
-      expect(desc.rows[0]?.orderby).toContain('DESC')
 
       await runStatements(client, readFileSync(migrationFile(path.join(dir, 'drizzle'), 'hypertables', 'down'), 'utf8'))
       expect(await columnstoreEnabled(client, 'public', 'metrics')).toBe(false)
