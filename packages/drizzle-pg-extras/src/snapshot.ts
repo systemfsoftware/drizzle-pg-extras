@@ -189,19 +189,25 @@ export type HypertableOrderSnapshot = {
   nulls: 'first' | 'last' | null
 }
 
-export type HypertableCompressionSnapshot = {
+export type HypertableColumnstoreSnapshot = {
   segmentBy: string[]
   orderBy: HypertableOrderSnapshot[]
 }
 
 export type HypertableRetentionSnapshot = {
-  dropAfter: string
+  dropAfter: string | null
+  dropCreatedBefore: string | null
   scheduleInterval: string | null
+  initialStart: string | null
+  timezone: string | null
 }
 
-export type HypertableCompressionPolicySnapshot = {
-  compressAfter: string
+export type HypertableColumnstorePolicySnapshot = {
+  after: string | null
+  createdBefore: string | null
   scheduleInterval: string | null
+  initialStart: string | null
+  timezone: string | null
 }
 
 export type HypertableSnapshot = {
@@ -214,9 +220,11 @@ export type HypertableSnapshot = {
   numberPartitions: number | null
   /** Used only by the create_hypertable statement. Changing it later does not write a migration. */
   migrateData: boolean
-  compression: HypertableCompressionSnapshot | null
+  /** Used only by the create_hypertable statement. Changing it later does not write a migration. */
+  createDefaultIndexes: boolean
+  columnstore: HypertableColumnstoreSnapshot | null
   retention: HypertableRetentionSnapshot | null
-  compressionPolicy: HypertableCompressionPolicySnapshot | null
+  columnstorePolicy: HypertableColumnstorePolicySnapshot | null
 }
 
 export type Snapshot = {
@@ -753,9 +761,83 @@ export function parseSnapshot(value: unknown): Snapshot {
     partitionedTables: record.partitionedTables ?? [],
     partitions: record.partitions ?? [],
     detaches: record.detaches ?? [],
-    hypertables: record.hypertables ?? [],
+    hypertables: Array.isArray(record.hypertables)
+      ? record.hypertables.map((hypertable) => normalizeHypertableSnapshot(hypertable))
+      : [],
     inventory: normalizeInventory(record.inventory),
   }
+}
+
+function normalizeHypertableSnapshot(value: unknown): HypertableSnapshot {
+  if (!value || typeof value !== 'object') throw new PgExtrasError('pg extras snapshot hypertable is not an object')
+  const raw = value as Record<string, unknown>
+  const schema = typeof raw.schema === 'string' ? raw.schema : 'public'
+  const name = typeof raw.name === 'string' ? raw.name : ''
+  if (name.length === 0) throw new PgExtrasError('pg extras snapshot hypertable is missing a name')
+  return {
+    id: typeof raw.id === 'string' ? raw.id : JSON.stringify(['hypertable', schema, name]),
+    schema,
+    name,
+    timeColumn: typeof raw.timeColumn === 'string' ? raw.timeColumn : '',
+    chunkTimeInterval: nullableString(raw.chunkTimeInterval),
+    partitioningColumn: nullableString(raw.partitioningColumn),
+    numberPartitions: typeof raw.numberPartitions === 'number' ? raw.numberPartitions : null,
+    migrateData: raw.migrateData === true,
+    createDefaultIndexes: raw.createDefaultIndexes !== false,
+    columnstore: normalizeColumnstoreSnapshot(raw.columnstore ?? raw.compression),
+    retention: normalizeRetentionSnapshot(raw.retention),
+    columnstorePolicy: normalizeColumnstorePolicySnapshot(raw.columnstorePolicy ?? raw.compressionPolicy),
+  }
+}
+
+function normalizeColumnstoreSnapshot(value: unknown): HypertableColumnstoreSnapshot | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  return {
+    segmentBy: Array.isArray(raw.segmentBy)
+      ? raw.segmentBy.filter((item): item is string => typeof item === 'string')
+      : [],
+    orderBy: Array.isArray(raw.orderBy)
+      ? raw.orderBy.flatMap((item) => {
+        if (!item || typeof item !== 'object') return []
+        const order = item as Record<string, unknown>
+        if (typeof order.column !== 'string') return []
+        return [{
+          column: order.column,
+          direction: order.direction === 'asc' || order.direction === 'desc' ? order.direction : null,
+          nulls: order.nulls === 'first' || order.nulls === 'last' ? order.nulls : null,
+        }]
+      })
+      : [],
+  }
+}
+
+function normalizeRetentionSnapshot(value: unknown): HypertableRetentionSnapshot | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  return {
+    dropAfter: nullableString(raw.dropAfter),
+    dropCreatedBefore: nullableString(raw.dropCreatedBefore),
+    scheduleInterval: nullableString(raw.scheduleInterval),
+    initialStart: nullableString(raw.initialStart),
+    timezone: nullableString(raw.timezone),
+  }
+}
+
+function normalizeColumnstorePolicySnapshot(value: unknown): HypertableColumnstorePolicySnapshot | null {
+  if (!value || typeof value !== 'object') return null
+  const raw = value as Record<string, unknown>
+  return {
+    after: nullableString(raw.after ?? raw.compressAfter),
+    createdBefore: nullableString(raw.createdBefore),
+    scheduleInterval: nullableString(raw.scheduleInterval),
+    initialStart: nullableString(raw.initialStart),
+    timezone: nullableString(raw.timezone),
+  }
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
 }
 
 const COMMENT_KINDS = new Set<CommentKind>([
@@ -1206,10 +1288,11 @@ function snapshotHypertable(hypertable: Hypertable, nameOf: (column: AnyPgColumn
     partitioningColumn: hypertable.partitioningColumn ? columnName(hypertable.partitioningColumn) : null,
     numberPartitions: hypertable.numberPartitions,
     migrateData: hypertable.migrateData,
-    compression: hypertable.compression
+    createDefaultIndexes: hypertable.createDefaultIndexes,
+    columnstore: hypertable.columnstore
       ? {
-        segmentBy: hypertable.compression.segmentBy.map(columnName),
-        orderBy: hypertable.compression.orderBy.map((order) => ({
+        segmentBy: hypertable.columnstore.segmentBy.map(columnName),
+        orderBy: hypertable.columnstore.orderBy.map((order) => ({
           column: columnName(order.column),
           direction: order.direction,
           nulls: order.nulls,
@@ -1217,7 +1300,7 @@ function snapshotHypertable(hypertable: Hypertable, nameOf: (column: AnyPgColumn
       }
       : null,
     retention: hypertable.retention ? { ...hypertable.retention } : null,
-    compressionPolicy: hypertable.compressionPolicy ? { ...hypertable.compressionPolicy } : null,
+    columnstorePolicy: hypertable.columnstorePolicy ? { ...hypertable.columnstorePolicy } : null,
   }
 }
 
