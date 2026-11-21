@@ -28,7 +28,7 @@ tags:
 
 ## Problem
 
-Continuous aggregates are created with `CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous)`, but after creation they do not behave like an ordinary PostgreSQL materialized view. The generator initially treated them as one: it rendered interval options as SQL expressions, assumed the TimescaleDB default matched real-time aggregation, and commented the object as a materialized view. Each mismatch passes unit assertions while failing against a live TimescaleDB 2.32 server.
+Continuous aggregates are created with `CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous)`, but after creation they do not behave like an ordinary PostgreSQL materialized view. In `@systemfsoftware/drizzle-pg-extras`, the defect lived in the continuous-aggregate SQL renderers `createContinuousAggregateSql`, `alterContinuousAggregateChunkIntervalSql`, and `alterContinuousAggregateRealTimeSql`. They treated a continuous aggregate as an ordinary materialized view: they rendered interval options as SQL expressions, assumed the TimescaleDB default matched real-time aggregation, and commented the object as a materialized view. Each mismatch passes unit assertions while failing against a live TimescaleDB 2.32 server.
 
 ## Mechanism
 
