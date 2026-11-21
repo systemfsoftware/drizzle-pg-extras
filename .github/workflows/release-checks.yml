@@ -31,12 +31,22 @@ jobs:
           git fetch --no-tags origin main
           base=$(git merge-base HEAD origin/main)
           echo "sha=$base" >> "$GITHUB_OUTPUT"
-          unexpected=$(git diff --name-only "$base" HEAD | grep -Ev '^(packages/[^/]+/(package\.json|CHANGELOG\.md)|\.changeset/[^/]+\.md)$' || true)
+          unexpected=$(git diff --name-status "$base" HEAD | grep -Ev '^(M[[:space:]]+packages/[^/]+/(package\.json|CHANGELOG\.md)|D[[:space:]]+\.changeset/[^/]+\.md)$' || true)
           if [ -n "$unexpected" ]; then
             echo "::error::the release branch changes files beyond the version surfaces, so main's verdict does not apply:"
             printf '%s\n' "$unexpected"
             exit 1
           fi
+          # A manifest may change its version field and nothing else.
+          for manifest in $(git diff --name-only "$base" HEAD -- 'packages/*/package.json'); do
+            changed=$(git diff -U0 "$base" HEAD -- "$manifest" | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' || true)
+            bad=$(printf '%s\n' "$changed" | grep -vE '^[+-][[:space:]]*"version":' || true)
+            if [ -n "$bad" ]; then
+              echo "::error::$manifest changes more than its version:"
+              printf '%s\n' "$bad"
+              exit 1
+            fi
+          done
       - name: Main's CI on the base commit passed
         env:
           BASE: ${{ steps.base.outputs.sha }}
@@ -46,9 +56,10 @@ jobs:
           deadline=$((SECONDS + 1200))
           missing=0
           while :; do
-            run=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
-              -f head_sha="$BASE" -f event=push -f per_page=1 --jq '.workflow_runs[0] // empty')
-            if [ -z "$run" ]; then
+            if ! run=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+              -f head_sha="$BASE" -f event=push -f per_page=1 --jq '.workflow_runs[0] // empty' 2>/dev/null); then
+              status=unreachable
+            elif [ -z "$run" ]; then
               status=missing
               missing=$((missing + 1))
             else
@@ -63,9 +74,16 @@ jobs:
           done
           id=$(jq -r .id <<< "$run")
           conclusion=$(jq -r .conclusion <<< "$run")
-          aggregate=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs" \
-            -f filter=latest -f per_page=100 \
-            --jq '[.jobs[] | select(.name == "checks / check")][0].conclusion // "missing"')
+          aggregate=unreachable
+          for _ in 1 2 3; do
+            if out=$(gh api --method GET "repos/$GITHUB_REPOSITORY/actions/runs/$id/jobs" \
+              -f filter=latest -f per_page=100 \
+              --jq '[.jobs[] | select(.name == "checks / check")][0].conclusion // "missing"' 2>/dev/null); then
+              aggregate=$out
+              break
+            fi
+            sleep 5
+          done
           if [ "$conclusion" != success ] || [ "$aggregate" != success ]; then
             echo "::error::main's CI run $id concluded ${conclusion} with checks / check ${aggregate}; the release reuses only a success"
             exit 1
@@ -101,4 +119,6 @@ jobs:
           set -euo pipefail
           title=$(<"$RUNNER_TEMP/pr-title")
           body=$(<"$RUNNER_TEMP/pr-body")
+          title=${title//$'\r'/}
+          body=${body//$'\r'/}
           printf '%s\n\n%s' "$title" "$body" | pnpm exec commitlint --verbose

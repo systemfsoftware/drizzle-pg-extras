@@ -39,7 +39,7 @@ jobs:
         uses: ./.github/actions/pnpm-store
       - run: pnpm install --frozen-lockfile
       # Only this job, and only on a push to main, writes the pnpm store; every other run restores it read-only.
-      - if: github.ref == 'refs/heads/main' && steps.pnpm-store.outputs.hit != 'true'
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.pnpm-store.outputs.hit != 'true'
         uses: ./.github/actions/pnpm-store
         with:
           mode: save
