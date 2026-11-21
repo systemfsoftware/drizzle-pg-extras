@@ -62,7 +62,9 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       expect(settings.rows[0]?.segmentby).toContain('device_id')
       expect(settings.rows[0]?.orderby).toContain('DESC')
       expect(await policyInterval(client, 'metrics', 'policy_retention', 'drop_after', '6 months')).toBe(true)
-      expect(await policyInterval(client, 'metrics', 'policy_columnstore', 'after', '7 days')).toBe(true)
+      expect(await policyInterval(client, 'metrics', 'policy_compression', 'compress_after', '7 days')).toBe(
+        true,
+      )
       const schedule = await client.query<{ matches: boolean }>(
         `SELECT schedule_interval = INTERVAL '1 day' AS matches
          FROM timescaledb_information.jobs
