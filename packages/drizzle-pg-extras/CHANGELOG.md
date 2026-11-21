@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.0
+
+The license is now Apache-2.0. `NOTICE` retains the MIT grant for code published under the earlier license.
+
 ## Unreleased
 
 - Turning off compression on a hypertable no longer fails once chunks are compressed. The generated SQL (in a down file, or when `compression` is removed from a declaration) now decompresses every compressed chunk before it switches compression off, because TimescaleDB refuses the switch while any chunk is compressed. On a large hypertable this rewrites the data, so allow for the time and disk space.
