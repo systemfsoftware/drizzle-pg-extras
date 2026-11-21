@@ -272,6 +272,18 @@ export type Hypertable = {
 
 export type ContinuousAggregateSource = Hypertable | ContinuousAggregate
 
+export type ContinuousAggregateRefreshPolicy = {
+  startOffset: string | null
+  endOffset: string | null
+  scheduleInterval: string
+  initialStart: string | null
+  timezone: string | null
+  includeTieredData: boolean | null
+  bucketsPerBatch: number | null
+  maxBatchesPerExecution: number | null
+  refreshNewestFirst: boolean | null
+}
+
 export type ContinuousAggregate = {
   readonly [KIND]: 'continuousAggregate'
   readonly view: PgViewLike | null
@@ -282,6 +294,22 @@ export type ContinuousAggregate = {
   readonly realTime: boolean
   readonly chunkInterval: string | null
   readonly createGroupIndexes: boolean
+  readonly refreshPolicies: ContinuousAggregateRefreshPolicy[]
+  readonly columnstore: HypertableColumnstore | null
+  readonly columnstorePolicy: HypertableColumnstorePolicy | null
+  readonly retention: HypertableRetention | null
+}
+
+export type ContinuousAggregateRefreshPolicyConfig = {
+  startOffset?: string | null
+  endOffset?: string | null
+  scheduleInterval: string
+  initialStart?: string
+  timezone?: string
+  includeTieredData?: boolean
+  bucketsPerBatch?: number
+  maxBatchesPerExecution?: number
+  refreshNewestFirst?: boolean
 }
 
 export type ContinuousAggregateConfig = {
@@ -290,6 +318,23 @@ export type ContinuousAggregateConfig = {
   realTime?: boolean
   chunkInterval?: string
   createGroupIndexes?: boolean
+  refreshPolicies?: readonly ContinuousAggregateRefreshPolicyConfig[]
+  columnstore?: {
+    segmentBy?: readonly string[]
+    orderBy?: readonly (string | { column: string; direction?: 'asc' | 'desc'; nulls?: 'first' | 'last' })[]
+  }
+  columnstorePolicy?: {
+    after: string
+    scheduleInterval?: string
+    initialStart?: string
+    timezone?: string
+  }
+  retention?: {
+    dropAfter: string
+    scheduleInterval?: string
+    initialStart?: string
+    timezone?: string
+  }
 }
 
 export type PgExtras = {
@@ -1607,6 +1652,15 @@ export function continuousAggregate(
   if (config.createGroupIndexes !== undefined && typeof config.createGroupIndexes !== 'boolean') {
     throw new PgExtrasError(`${where}: createGroupIndexes must be a boolean`)
   }
+  if ((config.retention as { dropCreatedBefore?: unknown } | undefined)?.dropCreatedBefore !== undefined) {
+    throw new PgExtrasError(`${where}: retention.dropCreatedBefore is not supported on a continuous aggregate`)
+  }
+  if ((config.columnstorePolicy as { createdBefore?: unknown } | undefined)?.createdBefore !== undefined) {
+    throw new PgExtrasError(`${where}: columnstorePolicy.createdBefore is not supported on a continuous aggregate`)
+  }
+  if (config.columnstorePolicy && !config.columnstore) {
+    throw new PgExtrasError(`${where}: columnstorePolicy requires columnstore`)
+  }
   return brand(
     {
       view,
@@ -1619,9 +1673,87 @@ export function continuousAggregate(
         ? null
         : normalizeInterval(config.chunkInterval, `${where} chunkInterval`),
       createGroupIndexes: config.createGroupIndexes ?? true,
+      refreshPolicies: readContinuousAggregatePolicies(config.refreshPolicies ?? [], where),
+      columnstore: config.columnstore ? readColumnstore(null, config.columnstore, where) : null,
+      columnstorePolicy: config.columnstorePolicy
+        ? readContinuousAggregateColumnstorePolicy(config.columnstorePolicy, where)
+        : null,
+      retention: config.retention ? readContinuousAggregateRetention(config.retention, where) : null,
     },
     'continuousAggregate',
   )
+}
+
+function readContinuousAggregatePolicies(
+  policies: readonly ContinuousAggregateRefreshPolicyConfig[],
+  where: string,
+): ContinuousAggregateRefreshPolicy[] {
+  const seen = new Set<string>()
+  return policies.map((policy, index) => {
+    const at = `${where} refreshPolicies[${index}]`
+    if (policy.scheduleInterval === undefined) throw new PgExtrasError(`${at}.scheduleInterval is required`)
+    const startOffset = policy.startOffset === undefined || policy.startOffset === null
+      ? null
+      : normalizeInterval(policy.startOffset, `${at}.startOffset`)
+    const endOffset = policy.endOffset === undefined || policy.endOffset === null
+      ? null
+      : normalizeInterval(policy.endOffset, `${at}.endOffset`)
+    const key = `${startOffset ?? 'null'}|${endOffset ?? 'null'}`
+    if (seen.has(key)) throw new PgExtrasError(`${where}: refresh policy window ${key} is declared more than once`)
+    seen.add(key)
+    return {
+      startOffset,
+      endOffset,
+      scheduleInterval: normalizeInterval(policy.scheduleInterval, `${at}.scheduleInterval`),
+      initialStart: policy.initialStart === undefined
+        ? null
+        : normalizeTimestamp(policy.initialStart, `${at}.initialStart`),
+      timezone: policy.timezone === undefined ? null : normalizeTimezone(policy.timezone, `${at}.timezone`),
+      includeTieredData: readOptionalBoolean(policy.includeTieredData, `${at}.includeTieredData`),
+      bucketsPerBatch: readOptionalPositiveInt(policy.bucketsPerBatch, `${at}.bucketsPerBatch`),
+      maxBatchesPerExecution: readOptionalPositiveInt(
+        policy.maxBatchesPerExecution,
+        `${at}.maxBatchesPerExecution`,
+      ),
+      refreshNewestFirst: readOptionalBoolean(policy.refreshNewestFirst, `${at}.refreshNewestFirst`),
+    }
+  })
+}
+
+function readContinuousAggregateColumnstorePolicy(
+  policy: { after: string; scheduleInterval?: string; initialStart?: string; timezone?: string },
+  where: string,
+): HypertableColumnstorePolicy {
+  if (policy.after === undefined) throw new PgExtrasError(`${where} columnstorePolicy requires after`)
+  return {
+    after: normalizeInterval(policy.after, `${where} columnstorePolicy.after`),
+    createdBefore: null,
+    ...readPolicyTiming(policy, `${where} columnstorePolicy`),
+  }
+}
+
+function readContinuousAggregateRetention(
+  retention: { dropAfter: string; scheduleInterval?: string; initialStart?: string; timezone?: string },
+  where: string,
+): HypertableRetention {
+  if (retention.dropAfter === undefined) throw new PgExtrasError(`${where} retention requires dropAfter`)
+  return {
+    dropAfter: normalizeInterval(retention.dropAfter, `${where} retention.dropAfter`),
+    dropCreatedBefore: null,
+    ...readPolicyTiming(retention, `${where} retention`),
+  }
+}
+
+function readOptionalBoolean(value: boolean | undefined, where: string): boolean | null {
+  if (value === undefined) return null
+  if (typeof value !== 'boolean') throw new PgExtrasError(`${where} must be a boolean`)
+  return value
+}
+
+function readOptionalPositiveInt(value: number | undefined, where: string): number | null {
+  if (value === undefined) return null
+  if (!Number.isInteger(value) || value < 1) throw new PgExtrasError(`${where} must be an integer >= 1`)
+  return value
 }
 
 function continuousAggregateIdentity(

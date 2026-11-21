@@ -234,6 +234,18 @@ export type ContinuousAggregateSourceSnapshot = {
   name: string
 }
 
+export type ContinuousAggregateRefreshPolicySnapshot = {
+  startOffset: string | null
+  endOffset: string | null
+  scheduleInterval: string
+  initialStart: string | null
+  timezone: string | null
+  includeTieredData: boolean | null
+  bucketsPerBatch: number | null
+  maxBatchesPerExecution: number | null
+  refreshNewestFirst: boolean | null
+}
+
 export type ContinuousAggregateSnapshot = {
   id: string
   schema: string
@@ -243,6 +255,10 @@ export type ContinuousAggregateSnapshot = {
   realTime: boolean
   chunkInterval: string | null
   createGroupIndexes: boolean
+  refreshPolicies: ContinuousAggregateRefreshPolicySnapshot[]
+  columnstore: HypertableColumnstoreSnapshot | null
+  columnstorePolicy: HypertableColumnstorePolicySnapshot | null
+  retention: HypertableRetentionSnapshot | null
 }
 
 export type Snapshot = {
@@ -891,7 +907,30 @@ function normalizeContinuousAggregateSnapshot(value: unknown): ContinuousAggrega
     realTime: raw.realTime !== false,
     chunkInterval: nullableString(raw.chunkInterval),
     createGroupIndexes: raw.createGroupIndexes !== false,
+    refreshPolicies: Array.isArray(raw.refreshPolicies)
+      ? raw.refreshPolicies.flatMap((policy) => normalizeRefreshPolicySnapshot(policy))
+      : [],
+    columnstore: normalizeColumnstoreSnapshot(raw.columnstore),
+    columnstorePolicy: normalizeColumnstorePolicySnapshot(raw.columnstorePolicy),
+    retention: normalizeRetentionSnapshot(raw.retention),
   }
+}
+
+function normalizeRefreshPolicySnapshot(value: unknown): ContinuousAggregateRefreshPolicySnapshot[] {
+  if (!value || typeof value !== 'object') return []
+  const raw = value as Record<string, unknown>
+  if (typeof raw.scheduleInterval !== 'string') return []
+  return [{
+    startOffset: nullableString(raw.startOffset),
+    endOffset: nullableString(raw.endOffset),
+    scheduleInterval: raw.scheduleInterval,
+    initialStart: nullableString(raw.initialStart),
+    timezone: nullableString(raw.timezone),
+    includeTieredData: typeof raw.includeTieredData === 'boolean' ? raw.includeTieredData : null,
+    bucketsPerBatch: typeof raw.bucketsPerBatch === 'number' ? raw.bucketsPerBatch : null,
+    maxBatchesPerExecution: typeof raw.maxBatchesPerExecution === 'number' ? raw.maxBatchesPerExecution : null,
+    refreshNewestFirst: typeof raw.refreshNewestFirst === 'boolean' ? raw.refreshNewestFirst : null,
+  }]
 }
 
 const COMMENT_KINDS = new Set<CommentKind>([
@@ -1373,6 +1412,23 @@ function snapshotContinuousAggregates(
       realTime: aggregate.realTime,
       chunkInterval: aggregate.chunkInterval,
       createGroupIndexes: aggregate.createGroupIndexes,
+      refreshPolicies: [...aggregate.refreshPolicies].sort((a, b) =>
+        `${a.startOffset ?? ''}|${a.endOffset ?? ''}`.localeCompare(`${b.startOffset ?? ''}|${b.endOffset ?? ''}`)
+      ),
+      columnstore: aggregate.columnstore
+        ? {
+          segmentBy: [...aggregate.columnstore.segmentBy].map((column) =>
+            typeof column === 'string' ? column : column.name
+          ),
+          orderBy: aggregate.columnstore.orderBy.map((order) => ({
+            column: typeof order.column === 'string' ? order.column : order.column.name,
+            direction: order.direction,
+            nulls: order.nulls,
+          })),
+        }
+        : null,
+      columnstorePolicy: aggregate.columnstorePolicy ? { ...aggregate.columnstorePolicy } : null,
+      retention: aggregate.retention ? { ...aggregate.retention } : null,
     }
     if (aggregates.some((item) => item.id === snap.id)) {
       throw new PgExtrasError(

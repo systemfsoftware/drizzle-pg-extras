@@ -177,6 +177,137 @@ FROM metrics GROUP BY time_bucket('1 hour', time), device_id`,
     expect(() => diffSnapshots(before, emptySnapshot())).toThrow(/removed in one change/)
   })
 
+  it('adds refresh policies, columnstore, and retention to a continuous aggregate', () => {
+    const { table, ht } = setup()
+    const view = viewOf('metrics_hourly')
+    const cagg = continuousAggregate(view, {
+      query: 'SELECT 1 AS value',
+      source: ht,
+      refreshPolicies: [
+        { startOffset: '1 month', endOffset: '1 hour', scheduleInterval: '1 hour' },
+        {
+          startOffset: null,
+          endOffset: '1 day',
+          scheduleInterval: '1 day',
+          initialStart: '2024-02-01T00:00:00Z',
+          timezone: 'UTC',
+          includeTieredData: true,
+          bucketsPerBatch: 10,
+          maxBatchesPerExecution: 5,
+          refreshNewestFirst: false,
+        },
+      ],
+      columnstore: {
+        segmentBy: ['device_id'],
+        orderBy: [{ column: 'bucket', direction: 'desc', nulls: 'last' }],
+      },
+      columnstorePolicy: { after: '7 days', scheduleInterval: '1 hour' },
+      retention: { dropAfter: '6 months' },
+    })
+    const up = diffSnapshots(emptySnapshot(), snapshotExtras(extras([cagg], table, ht))).up.join('\n')
+    expect(up).toContain(`ALTER MATERIALIZED VIEW "public"."metrics_hourly" SET (`)
+    expect(up).toContain(`timescaledb.segmentby = '"device_id"'`)
+    expect(up).toContain(`timescaledb.orderby = '"bucket" DESC NULLS LAST'`)
+    expect(up).toContain(
+      `CALL add_columnstore_policy('"public"."metrics_hourly"'::regclass, after => INTERVAL '7 days', schedule_interval => INTERVAL '1 hour', if_not_exists => TRUE);`,
+    )
+    expect(up).toContain(
+      `SELECT add_retention_policy('"public"."metrics_hourly"'::regclass, drop_after => INTERVAL '6 months', if_not_exists => TRUE);`,
+    )
+    expect(up.match(/add_continuous_aggregate_policy/g)).toHaveLength(2)
+    expect(up).toContain(
+      `start_offset => INTERVAL '1 month', end_offset => INTERVAL '1 hour', schedule_interval => INTERVAL '1 hour', if_not_exists => TRUE`,
+    )
+    expect(up).toContain("start_offset => NULL, end_offset => INTERVAL '1 day'")
+    expect(up).toContain('include_tiered_data => true')
+    expect(up).toContain('buckets_per_batch => 10')
+    expect(up).toContain('max_batches_per_execution => 5')
+    expect(up).toContain('refresh_newest_first => false')
+    expect(up).toContain("initial_start => '2024-02-01T00:00:00Z'::timestamptz")
+    expect(up).toContain("timezone => 'UTC'")
+  })
+
+  it('removes and re-adds the refresh policy set when a window changes', () => {
+    const { table, ht } = setup()
+    const before = continuousAggregate(viewOf('metrics_hourly'), {
+      query: 'SELECT 1 AS value',
+      source: ht,
+      refreshPolicies: [{ startOffset: '1 month', endOffset: '1 hour', scheduleInterval: '1 hour' }],
+    })
+    const after = continuousAggregate(viewOf('metrics_hourly'), {
+      query: 'SELECT 1 AS value',
+      source: ht,
+      refreshPolicies: [{ startOffset: '2 months', endOffset: '1 hour', scheduleInterval: '2 hours' }],
+    })
+    const up = diffSnapshots(
+      snapshotExtras(extras([before], table, ht)),
+      snapshotExtras(extras([after], table, ht)),
+    ).up.join('\n')
+    expect(up).toContain('remove_continuous_aggregate_policy')
+    expect(up.indexOf('remove_continuous_aggregate_policy')).toBeLessThan(
+      up.indexOf(`start_offset => INTERVAL '2 months'`),
+    )
+    expect(up).not.toContain('DROP MATERIALIZED VIEW')
+    const reordered = continuousAggregate(viewOf('metrics_hourly'), {
+      query: 'SELECT 1 AS value',
+      source: ht,
+      refreshPolicies: [
+        { startOffset: '1 month', endOffset: '1 hour', scheduleInterval: '1 hour' },
+        { startOffset: '2 months', endOffset: '1 hour', scheduleInterval: '1 hour' },
+      ],
+    })
+    const swapped = continuousAggregate(viewOf('metrics_hourly'), {
+      query: 'SELECT 1 AS value',
+      source: ht,
+      refreshPolicies: [
+        { startOffset: '2 months', endOffset: '1 hour', scheduleInterval: '1 hour' },
+        { startOffset: '1 month', endOffset: '1 hour', scheduleInterval: '1 hour' },
+      ],
+    })
+    expect(
+      diffSnapshots(
+        snapshotExtras(extras([reordered], table, ht)),
+        snapshotExtras(extras([swapped], table, ht)),
+      ).up,
+    ).toEqual([])
+  })
+
+  it('rejects unsupported aggregate policy variants and duplicate windows', () => {
+    const { ht } = setup()
+    expect(() =>
+      continuousAggregate('metrics_hourly', {
+        query: 'SELECT 1',
+        source: ht,
+        refreshPolicies: [
+          { startOffset: '1 month', endOffset: '1 hour', scheduleInterval: '1 hour' },
+          { startOffset: '1 month', endOffset: '1 hour', scheduleInterval: '2 hours' },
+        ],
+      })
+    ).toThrow(/declared more than once/)
+    expect(() =>
+      continuousAggregate('metrics_hourly', {
+        query: 'SELECT 1',
+        source: ht,
+        columnstore: {},
+        columnstorePolicy: { after: '1 day', createdBefore: '1 year' } as never,
+      })
+    ).toThrow(/createdBefore is not supported/)
+    expect(() =>
+      continuousAggregate('metrics_hourly', {
+        query: 'SELECT 1',
+        source: ht,
+        retention: { dropAfter: '1 day', dropCreatedBefore: '1 year' } as never,
+      })
+    ).toThrow(/dropCreatedBefore is not supported/)
+    expect(() =>
+      continuousAggregate('metrics_hourly', {
+        query: 'SELECT 1',
+        source: ht,
+        columnstorePolicy: { after: '1 day' },
+      })
+    ).toThrow(/requires columnstore/)
+  })
+
   it('validates the declaration and reads an old snapshot without aggregates', () => {
     const table = metricsTable()
     const ht = hypertable(table, { timeColumn: table.time })
