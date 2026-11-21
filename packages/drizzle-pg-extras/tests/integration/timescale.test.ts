@@ -57,7 +57,7 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       expect(await columnstoreEnabled(client, 'public', 'metrics')).toBe(true)
       const settings = await client.query<{ segmentby: string; orderby: string }>(
         `SELECT segmentby, orderby FROM timescaledb_information.hypertable_columnstore_settings
-         WHERE hypertable_schema = 'public' AND hypertable_name = 'metrics'`,
+         WHERE hypertable = 'public.metrics'::regclass`,
       )
       expect(settings.rows[0]?.segmentby).toContain('device_id')
       expect(settings.rows[0]?.orderby).toContain('DESC')
@@ -117,7 +117,7 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       expect(await policyInterval(client, 'metrics', 'policy_retention', 'drop_after', '3 months')).toBe(true)
       const asc = await client.query<{ orderby: string }>(
         `SELECT orderby FROM timescaledb_information.hypertable_columnstore_settings
-         WHERE hypertable_schema = 'public' AND hypertable_name = 'metrics'`,
+         WHERE hypertable = 'public.metrics'::regclass`,
       )
       expect(asc.rows[0]?.orderby).toContain('ASC')
 
@@ -129,7 +129,7 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       expect(await policyInterval(client, 'metrics', 'policy_retention', 'drop_after', '6 months')).toBe(true)
       const desc = await client.query<{ orderby: string }>(
         `SELECT orderby FROM timescaledb_information.hypertable_columnstore_settings
-         WHERE hypertable_schema = 'public' AND hypertable_name = 'metrics'`,
+         WHERE hypertable = 'public.metrics'::regclass`,
       )
       expect(desc.rows[0]?.orderby).toContain('DESC')
 
@@ -423,7 +423,7 @@ async function partitionsOf(client: pg.Client, schema: string, table: string, co
 async function columnstoreEnabled(client: pg.Client, schema: string, table: string): Promise<boolean> {
   const result = await client.query(
     `SELECT 1 FROM timescaledb_information.hypertable_columnstore_settings
-     WHERE hypertable_schema = $1 AND hypertable_name = $2`,
+     WHERE hypertable = format('%I.%I', $1, $2)::regclass`,
     [schema, table],
   )
   return (result.rowCount ?? 0) > 0
