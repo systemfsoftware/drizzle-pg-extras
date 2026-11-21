@@ -116,7 +116,9 @@ export function removeColumnstorePolicySql(ht: Pick<HypertableSnapshot, 'schema'
 export function createContinuousAggregateSql(aggregate: ContinuousAggregateSnapshot): string {
   const options = ['timescaledb.continuous']
   if (!aggregate.realTime) options.push('timescaledb.materialized_only = true')
-  if (aggregate.chunkInterval) options.push(`timescaledb.chunk_interval = ${intervalLiteral(aggregate.chunkInterval)}`)
+  if (aggregate.chunkInterval) {
+    options.push(`timescaledb.chunk_interval = ${quoteLiteral(aggregate.chunkInterval)}`)
+  }
   if (!aggregate.createGroupIndexes) options.push('timescaledb.create_group_indexes = false')
   return `-- Create the continuous aggregate ${
     qualify(aggregate.schema, aggregate.name)
