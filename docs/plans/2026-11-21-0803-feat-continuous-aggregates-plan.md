@@ -14,9 +14,9 @@ execution: code
 - **Means:** A `continuousAggregate()` extras declaration, a widened `hypertable()` declaration (columnstore, sparse indexes, retention variants, reorder), and the current SQL vocabulary (`by_range`/`by_hash`, `enable_columnstore`, `add_columnstore_policy`, `drop_created_before`) in a stack of four PRs that release together; the stored snapshot accepts the old compression keys once, for upgrades.
 - **Authority:** The brief; TimescaleDB 2.32.1 (released 2026-11-19, the latest release) documentation and release notes; the TimescaleDB SQL definitions; drizzle-kit 0.31.11 and drizzle-orm `main` view and migrator behavior; this repository's snapshot, diff, journal, and README contracts; then this plan's KTDs for HOW-level choices.
 - **Open blockers:** None.
-- **Execution profile:** Four stacked PRs, bottom-up (a fifth only if a unit pushes a PR past the ceiling), one concern each and at most ~400 changed non-test lines per PR. PR1 targets `main`; PR2 targets PR1's branch; PR3 targets PR2's; PR4 targets PR3's. Each PR keeps `checks / check` green on the pinned `timescale/timescaledb:2.32.1-pg16` image and carries its own `.changeset` intent. The stack is linked with `gh stack link` and kept current with `gh stack sync`; merging is bottom-up.
+- **Execution profile:** Four stacked PRs, bottom-up (a fifth only if a unit pushes a PR past the ceiling), one concern each and at most ~400 changed non-test lines per PR. PR1 targets `main`; PR2 targets PR1's branch; PR3 targets PR2's; PR4 targets PR3's. Each next PR is built and opened as a draft on the branch below as soon as that branch is pushed, without waiting for the lower PR's review or merge. A ruling that requires a fix lands as a fix on that PR's branch, and the stack syncs upward. Each PR keeps `checks / check` green on the pinned `timescale/timescaledb:2.32.1-pg16` image and carries its own `.changeset` intent. The stack is linked with `gh stack link` and kept current with `gh stack sync`; merging is bottom-up.
 - **Stop conditions:** This repository is public. Visibility, settings, rulesets, and workflows' approval requirements do not change. No private name, id, path, host, person, or credential enters any file or commit. This planning run commits the plan file alone and pushes nothing.
-- **Who ships:** `ce-work` implements the units PR by PR in this worktree; the repository's merge queue merges each PR in stack order. Publishing stays with the release workflow and is out of scope here.
+- **Who ships:** `ce-work` implements the units PR by PR in this worktree; each next PR opens as a draft on the branch below without waiting for review, and the repository's merge queue merges each PR in stack order. Publishing stays with the release workflow and is out of scope here.
 
 ---
 
@@ -213,7 +213,7 @@ Changing an aggregate's query has three possible mechanisms: refuse and leave th
 - KTD7. **Generalized dimensions, with the one documented loss.** `create_hypertable` takes `by_range`; a space dimension is a second `add_dimension(..., by_hash(...))` statement; `create_default_indexes` is emitted only when `false`. `migrateData: true` with a space dimension throws in the factory, because `add_dimension` only runs on an empty hypertable. A later chunk interval change keeps `set_chunk_time_interval`, which TimescaleDB 2.32.1 still documents; a later space-dimension change keeps throwing.
 - KTD8. **A refresh policy's identity is its start/end window.** Policies are matched by the normalized pair, not array order. A changed schedule or option on a matched window removes and re-adds that policy; a new window adds; a missing window removes. Two entries with the same pair throw. `null` offsets render `NULL` and remain valid identities.
 - KTD9. **Sparse indexes are structured config, not a pass-through string.** `{ type: 'bloom' | 'minmax', columns }` entries are validated against the documented restrictions, rendered to the TimescaleDB `bloom(...)` / `minmax(...)` grammar, and sorted for a stable diff. `orderBy` is required. The validation rejects the hard errors the server would reject at migrate time; it allows the documented composite-bloom and minmax-on-orderby cases.
-- KTD10. **The PR stack is the delivery unit.** Four PRs, one concern each, at most ~400 changed non-test lines, bottom-up; each carries a changeset and green `checks / check` on the pinned 2.32.1 image. A unit that pushes its PR past the ceiling becomes its own PR with its own changeset, inserted in the stack. The owner-directed order puts the hypertable vocabulary first and the aggregate stack second.
+- KTD10. **The PR stack is the delivery unit.** Four PRs, one concern each, at most ~400 changed non-test lines, bottom-up; each carries a changeset and green `checks / check` on the pinned 2.32.1 image. A unit that pushes its PR past the ceiling becomes its own PR with its own changeset, inserted in the stack. The owner-directed order puts the hypertable vocabulary first and the aggregate stack second. No unit waits idle for a review ruling: the next PR opens as a draft on the branch below while the lower PR is open, and a ruling that requires a fix is sent to that PR's branch.
 
 ### High-Level Technical Design
 
@@ -245,16 +245,16 @@ Ordering inside one migration, after the change:
 
 ### PR Stack
 
-Each PR is one concern, targets the previous branch, and carries its own changeset. Estimated lines are net non-test lines in `packages/drizzle-pg-extras/src` plus `README.md`; test edits are excluded.
+Each PR is one concern, targets the previous branch, and carries its own changeset. It opens as a draft while the lower PR is open, without waiting for that PR's review or merge. Estimated lines are net non-test lines in `packages/drizzle-pg-extras/src` plus `README.md`; test edits are excluded.
 
-| PR | Concern | Units | Non-test lines (est.) | Waits on |
+| PR | Concern | Units | Non-test lines (est.) | Base |
 | --- | --- | --- | --- | --- |
-| PR1 | Hypertable current vocabulary | U1-U3 | ~360 | Nothing; targets `main` |
-| PR2 | Continuous aggregates: declaration and DDL | U4-U7 | ~380 | PR1 merge; the aggregate snapshot reuses the columnstore and dimension shapes |
-| PR3 | Aggregate policies and storage | U8-U9 | ~260 | PR2 merge; policies and storage attach to the aggregate model |
-| PR4 | Sparse indexes and reorder | U10-U11 | ~230 | PR3 merge order only; it needs PR1's columnstore config and nothing from PR2/PR3 |
+| PR1 | Hypertable current vocabulary | U1-U3 | ~360 | `main` |
+| PR2 | Continuous aggregates: declaration and DDL | U4-U7 | ~380 | PR1 branch; draft while PR1 is open |
+| PR3 | Aggregate policies and storage | U8-U9 | ~260 | PR2 branch; draft while PR2 is open |
+| PR4 | Sparse indexes and reorder | U10-U11 | ~230 | PR3 branch; draft while PR3 is open |
 
-Why four: the owner required a reviewable stack and a ~400-line ceiling per PR, and each group is a separate consumer-visible concern (hypertable vocabulary, aggregate DDL, aggregate policies/storage, hypertable index and reorder surface). PR2 and PR3 depend on the aggregate model; PR4 is independent of the aggregate work but is ordered last by the downstream priority. The stack is linked with `gh stack link` after each commit and kept current with `gh stack sync`, per the repository's stacked-PR rule; no hand-set bases.
+Why four: the owner required a reviewable stack and a ~400-line ceiling per PR, and each group is a separate consumer-visible concern (hypertable vocabulary, aggregate DDL, aggregate policies/storage, hypertable index and reorder surface). PR2 and PR3 build on the aggregate model; PR4 is independent of the aggregate work but is ordered last by the downstream priority. The stack is linked with `gh stack link` after each commit and kept current with `gh stack sync`, per the repository's stacked-PR rule; no hand-set bases. A ruling that requires a fix is sent to the PR's branch and the stack syncs upward; no PR waits idle for it.
 
 ### Planning Assumptions
 
@@ -315,7 +315,7 @@ Unit Index (navigation only; unit bodies are authoritative):
 
 ### PR1: Hypertable Current Vocabulary
 
-Waits on: nothing; targets `main`.
+Base: `main`; no lower PR.
 
 **Expected non-test lines:** ~360. If U3 exceeds the ceiling after U1-U2, U3 becomes its own PR with its own changeset, inserted immediately after PR1; every later group shifts by one and the stack is re-linked.
 
@@ -386,7 +386,7 @@ Waits on: nothing; targets `main`.
 
 ### PR2: Continuous Aggregates — Declaration and DDL
 
-Waits on: PR1 (merge only). Separate because the aggregate model reuses PR1's columnstore and dimension shapes, and the owner's ~400-line ceiling keeps the declaration/DDL work apart from the policy/storage work.
+Base: PR1's branch, not a merge. It opens as a draft while PR1 is open and proceeds without waiting for PR1's review or merge; a ruling fix for PR1 lands on PR1's branch. Separate because the aggregate model reuses PR1's columnstore and dimension shapes, and the owner's ~400-line ceiling keeps the declaration/DDL work apart from the policy/storage work.
 
 **Expected non-test lines:** ~380. If U6 exceeds the ceiling, U7 and the rebuild/comment scenarios move to a new PR between PR2 and PR3; the stack is re-linked.
 
@@ -479,7 +479,7 @@ Waits on: PR1 (merge only). Separate because the aggregate model reuses PR1's co
 
 ### PR3: Aggregate Policies and Storage
 
-Waits on: PR2 (merge only). Separate because refresh policies, aggregate columnstore, and aggregate retention attach to the aggregate model and are a distinct consumer surface; the ceiling keeps them out of PR2.
+Base: PR2's branch, not a merge. It opens as a draft while PR2 is open and proceeds without waiting for PR2's review or merge; a ruling fix for PR2 lands on PR2's branch. Separate because refresh policies, aggregate columnstore, and aggregate retention attach to the aggregate model and are a distinct consumer surface; the ceiling keeps them out of PR2.
 
 **Expected non-test lines:** ~260. If U9 exceeds the ceiling, aggregate retention moves to its own PR after PR3.
 
@@ -528,7 +528,7 @@ Waits on: PR2 (merge only). Separate because refresh policies, aggregate columns
 
 ### PR4: Sparse Indexes and Reorder
 
-Waits on: PR3 (merge order only). Separate because combining it with PR3 would exceed the owner's ~400-line ceiling; it needs PR1's columnstore config and nothing from PR2/PR3, and the downstream priority orders the aggregate work ahead of it.
+Base: PR3's branch, not a merge. It opens as a draft while PR3 is open and proceeds without waiting for PR3's review or merge; a ruling fix for PR3 lands on PR3's branch. Separate because combining it with PR3 would exceed the owner's ~400-line ceiling; it needs PR1's columnstore config and nothing from PR2/PR3, and the downstream priority orders the aggregate work ahead of it.
 
 **Expected non-test lines:** ~230. If U10 plus U11 exceeds the ceiling, U11 moves to a fifth PR with its own changeset.
 
