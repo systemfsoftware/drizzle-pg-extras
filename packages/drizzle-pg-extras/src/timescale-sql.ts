@@ -148,7 +148,7 @@ export function alterContinuousAggregateChunkIntervalSql(aggregate: ContinuousAg
     qualify(aggregate.schema, aggregate.name)
   } to ${aggregate.chunkInterval}.\nALTER MATERIALIZED VIEW ${
     qualify(aggregate.schema, aggregate.name)
-  } SET (timescaledb.chunk_interval = ${intervalLiteral(aggregate.chunkInterval ?? '')});`
+  } SET (timescaledb.chunk_interval = ${quoteLiteral(aggregate.chunkInterval ?? '')});`
 }
 
 export function createContinuousAggregateStatements(aggregate: ContinuousAggregateSnapshot): string[] {

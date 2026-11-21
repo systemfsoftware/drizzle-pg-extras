@@ -239,6 +239,16 @@ describe.skipIf(!url)('timescaledb continuous aggregates', () => {
       process.chdir(cwd)
       expect(sqlFiles(path.join(dir, 'drizzle'))).toEqual(before)
 
+      writeFileSync(path.join(dir, 'schema.ts'), aggregateSchemaSource(source, 'avg', 'avg', '2 hours'))
+      process.chdir(dir)
+      expect(await run(['generate', '--name', 'chunk_alter'])).toBe(0)
+      process.chdir(cwd)
+      const chunkAlterSql = readFileSync(migrationFile(path.join(dir, 'drizzle'), 'chunk_alter'), 'utf8')
+      expect(chunkAlterSql).toContain("timescaledb.chunk_interval = '2 hours'")
+      expect(chunkAlterSql).not.toContain('INTERVAL')
+      const chunkAlter = kitExec(dir, ['migrate', '--config', 'drizzle.config.ts'])
+      expect(chunkAlter.status, chunkAlter.stderr + chunkAlter.stdout).toBe(0)
+
       writeFileSync(path.join(dir, 'schema.ts'), aggregateSchemaSource(source, 'max'))
       process.chdir(dir)
       expect(await run(['generate', '--name', 'leaf_rebuild'])).toBe(0)
@@ -268,7 +278,12 @@ describe.skipIf(!url)('timescaledb continuous aggregates', () => {
   })
 })
 
-function aggregateSchemaSource(sourcePath: string, leafAggregate = 'avg', parentAggregate = 'avg'): string {
+function aggregateSchemaSource(
+  sourcePath: string,
+  leafAggregate = 'avg',
+  parentAggregate = 'avg',
+  chunkInterval = '1 hour',
+): string {
   return `import { integer, pgTable, pgView, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
 import { continuousAggregate, hypertable, pgExtension, withComment } from ${JSON.stringify(sourcePath)};
 
@@ -296,7 +311,7 @@ const hourlyView = withComment(pgView("metrics_hourly", {
 export const metricsHourly = continuousAggregate(hourlyView, {
   query: \`SELECT time_bucket('1 hour', time) AS bucket, device_id, ${parentAggregate}(value) AS value FROM metrics GROUP BY time_bucket('1 hour', time), device_id\`,
   source: metricsHypertable,
-  chunkInterval: "1 hour",
+  chunkInterval: "${chunkInterval}",
   refreshPolicies: [{ startOffset: "1 month", endOffset: "1 hour", scheduleInterval: "1 hour" }],
   columnstore: { segmentBy: ["device_id"], orderBy: [{ column: "bucket", direction: "desc" }] },
   columnstorePolicy: { after: "7 days" },
