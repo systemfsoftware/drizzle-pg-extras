@@ -13,6 +13,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 env:
   CI: "true"
@@ -54,6 +55,14 @@ jobs:
           title=${PR_TITLE//$'\r'/}
           body=${PR_BODY//$'\r'/}
           printf '%s\n\n%s' "$title" "$body" | pnpm exec commitlint --verbose
+
+  changeset:
+    name: change intent
+    if: github.event_name == 'pull_request' && github.head_ref != 'changeset-release/main'
+    uses: systemfsoftware/pnpm-release-management/.github/workflows/changeset-check.yml@1e897828d917341fb7dd444c7bbd6cfa0998caa9
+    permissions:
+      contents: read
+      pull-requests: read
 
   test:
     name: test (node ${{ matrix.node }}, drizzle 0.x)
@@ -163,13 +172,32 @@ jobs:
     name: checks / check
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [static-checks, test, test-rc, timescale]
+    needs: [static-checks, changeset, test, test-rc, timescale]
     if: ${{ always() }}
     steps:
       - name: Require every job to succeed
         env:
-          RESULTS: ${{ join(needs.*.result, ' ') }}
+          STATIC_CHECKS: ${{ needs.static-checks.result }}
+          TEST: ${{ needs.test.result }}
+          TEST_RC: ${{ needs.test-rc.result }}
+          TIMESCALE: ${{ needs.timescale.result }}
+          CHANGESET: ${{ needs.changeset.result }}
+          EVENT: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
         run: |
-          for result in $RESULTS; do
-            [ "$result" = success ] || { echo "A required job finished as: $result"; exit 1; }
+          status=0
+          for pair in "static-checks:$STATIC_CHECKS" "test:$TEST" "test-rc:$TEST_RC" "timescale:$TIMESCALE"; do
+            case "$pair" in
+              *:success) ;;
+              *) echo "A required job finished as: $pair"; status=1 ;;
+            esac
           done
+          if [ "$CHANGESET" != success ]; then
+            if [ "$CHANGESET" = skipped ] && { [ "$EVENT" != pull_request ] || [ "$HEAD_REF" = changeset-release/main ]; }; then
+              :
+            else
+              echo "A required job finished as: changeset:$CHANGESET"
+              status=1
+            fi
+          fi
+          exit "$status"
