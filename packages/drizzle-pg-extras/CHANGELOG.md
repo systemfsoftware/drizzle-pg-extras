@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.0
+
+Continuous aggregates now accept `refreshPolicies`, `columnstore`, `columnstorePolicy`, and `retention`. Refresh policies render `add_continuous_aggregate_policy` with the declared windows, schedule, timezone, initial start, tiered data, batch limits, and newest-first option; a policy-set change removes the old policy and re-adds the declared set. Aggregate columnstore renders `ALTER MATERIALIZED VIEW ... SET (enable_columnstore, segmentby, orderby)`, its policy renders `CALL add_columnstore_policy`, and retention renders `add_retention_policy`. `createdBefore` and `dropCreatedBefore` are rejected on an aggregate.
+
+The license is now Apache-2.0. `NOTICE` retains the MIT grant for code published under the earlier license.
+
+Add `continuousAggregate()` for TimescaleDB continuous aggregates. Declare the materialized view with `pgMaterializedView(...).existing()`, pass its SELECT, and optionally its source hypertable or aggregate, real-time setting, chunk interval, and group-index setting. `generate` writes `CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous) ... WITH NO DATA`, rebuilds on a definition change, alters real-time and chunk interval in place, orders stacked aggregates parent-first and drops child-first, and keeps comments through rebuilds. A source table cannot be removed in the same change as its aggregate; a parent aggregate with a declared child cannot be rebuilt in one step.
+
+The hypertable config now uses the current TimescaleDB columnstore vocabulary: `compression`, `compressionPolicy`, and `compressAfter` are replaced by `columnstore`, `columnstorePolicy`, and `after`. The emitted SQL uses `timescaledb.enable_columnstore`, `timescaledb.segmentby`, `timescaledb.orderby`, `add_columnstore_policy`, and `convert_to_rowstore`. Old snapshots still read. `create_hypertable` now uses `by_range` and a separate `add_dimension(..., by_hash(...))`, so `migrateData` cannot be combined with a space partition. Retention accepts `dropCreatedBefore`, and both policies accept `scheduleInterval`, `initialStart`, and `timezone`. `createDefaultIndexes: false` omits create_hypertable's default index.
+
+Hypertables now accept `columnstore.sparseIndex` with `bloom` and `minmax` entries, validated against the documented restrictions and rendered into `timescaledb.sparse_index`. They also accept `reorder`, which names an index for `add_reorder_policy` and is removed or replaced when the declaration changes.
+
 ## Unreleased
 
 - Turning off compression on a hypertable no longer fails once chunks are compressed. The generated SQL (in a down file, or when `compression` is removed from a declaration) now decompresses every compressed chunk before it switches compression off, because TimescaleDB refuses the switch while any chunk is compressed. On a large hypertable this rewrites the data, so allow for the time and disk space.
