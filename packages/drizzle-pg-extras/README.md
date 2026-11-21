@@ -464,18 +464,6 @@ drizzle-pg-extras generate [--config drizzle.config.ts] [--name touch_updated_at
 drizzle-pg-extras check [--config drizzle.config.ts]
 ```
 
-## Development
-
-```sh
-pnpm install
-pnpm test
-pnpm typecheck
-pnpm lint
-pnpm format:check
-```
-
-Unit tests cover SQL generation and the snapshot diff, including comments, trigger rules, partition bounds, and hypertable SQL. `POSTGRES_URL` points the Postgres integration tests at a real server. One runs `drizzle-kit migrate`, checks that the trigger fires, and that comments on the table, column, enum, view, function, trigger, index, constraint, and extension exist. Another checks a deferred constraint trigger, transition tables, `INSTEAD OF` on a view, `UPDATE OF` / `WHEN`, and `DISABLE TRIGGER`. The partition test checks range, list, and hash routing, attach, the empty-table guard, and the down file. `TIMESCALE_URL` points the Timescale test at a server with the extension. It checks `create_hypertable`, compression, both policies, a second generate that changes the chunk interval, the down file, and that `drizzle-kit generate` reports no schema changes. CI keeps the Postgres 16 job as it was and runs the Timescale test in a separate job on `timescale/timescaledb:2.32.1-pg16`.
-
 ## License
 
 MIT
