@@ -3,7 +3,7 @@
   "version": "0.6.0",
   "description": "Declare Postgres functions, triggers, extensions, partitioned tables, comments, and TimescaleDB hypertables next to a Drizzle schema and generate SQL migrations.",
   "type": "module",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/systemfsoftware/drizzle-pg-extras.git",
@@ -50,6 +50,7 @@
   "files": [
     "dist",
     "LICENSE",
+    "NOTICE",
     "README.md"
   ],
   "sideEffects": false,
