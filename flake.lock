@@ -611,6 +611,7 @@
       "original": {
         "owner": "systemfsoftware",
         "repo": "pnpm-release-management",
+        "rev": "1caca2828ed543409ae9ce0dceb949845a617564",
         "type": "github"
       }
     },
