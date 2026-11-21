@@ -18,9 +18,11 @@ export function createHypertableStatements(ht: HypertableSnapshot): string[] {
 }
 
 export function createHypertableSql(ht: HypertableSnapshot): string {
-  const args = [relation(ht), `by_range(${nameLiteral(ht.timeColumn)})`]
+  const range = ht.chunkTimeInterval
+    ? `by_range(${nameLiteral(ht.timeColumn)}, partition_interval => ${intervalLiteral(ht.chunkTimeInterval)})`
+    : `by_range(${nameLiteral(ht.timeColumn)})`
+  const args = [relation(ht), range]
   if (!ht.createDefaultIndexes) args.push('create_default_indexes => FALSE')
-  if (ht.chunkTimeInterval) args.push(`chunk_time_interval => ${intervalLiteral(ht.chunkTimeInterval)}`)
   if (ht.migrateData) args.push('migrate_data => TRUE')
   args.push('if_not_exists => TRUE')
   return `-- Convert ${qualify(ht.schema, ht.name)} into a TimescaleDB hypertable on ${
