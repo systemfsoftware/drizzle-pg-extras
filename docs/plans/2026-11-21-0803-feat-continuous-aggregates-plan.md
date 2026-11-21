@@ -11,13 +11,18 @@ execution: code
 ## Goal Capsule
 
 - **Objective:** A downstream application declares every TimescaleDB object it uses, including hypertables with the hypercore columnstore and sparse indexes, continuous aggregates stacked on other aggregates, and every policy it runs, next to its Drizzle schema; `drizzle-pg-extras generate` turns the declarations into reviewed up/down migrations that `drizzle-kit migrate` applies, and `drizzle-pg-extras check` gates drift, using the current TimescaleDB API rather than names kept only for compatibility.
-- **Means:** A `continuousAggregate()` extras declaration, a widened `hypertable()` declaration (columnstore, sparse indexes, retention variants, reorder), and the current SQL vocabulary (`by_range`/`by_hash`, `enable_columnstore`, `add_columnstore_policy`, `drop_created_before`) in one breaking release; the stored snapshot accepts the old compression keys once, for upgrades.
-- **Authority:** The brief; TimescaleDB 2.32.1 (released 2026-11-19, the latest release) documentation and release notes; the TimescaleDB SQL definitions; drizzle-kit 0.31.11 and drizzle-orm `main` view and migrator behavior; this repository's snapshot, diff, journal, and README contracts.
+- **Means:** A `continuousAggregate()` extras declaration, a widened `hypertable()` declaration (columnstore, sparse indexes, retention variants, reorder), and the current SQL vocabulary (`by_range`/`by_hash`, `enable_columnstore`, `add_columnstore_policy`, `drop_created_before`) in a stack of four PRs that release together; the stored snapshot accepts the old compression keys once, for upgrades.
+- **Authority:** The brief; TimescaleDB 2.32.1 (released 2026-11-19, the latest release) documentation and release notes; the TimescaleDB SQL definitions; drizzle-kit 0.31.11 and drizzle-orm `main` view and migrator behavior; this repository's snapshot, diff, journal, and README contracts; then this plan's KTDs for HOW-level choices.
 - **Open blockers:** None.
+- **Execution profile:** Four stacked PRs, bottom-up (a fifth only if a unit pushes a PR past the ceiling), one concern each and at most ~400 changed non-test lines per PR. PR1 targets `main`; PR2 targets PR1's branch; PR3 targets PR2's; PR4 targets PR3's. Each PR keeps `checks / check` green on the pinned `timescale/timescaledb:2.32.1-pg16` image and carries its own `.changeset` intent. The stack is linked with `gh stack link` and kept current with `gh stack sync`; merging is bottom-up.
+- **Stop conditions:** This repository is public. Visibility, settings, rulesets, and workflows' approval requirements do not change. No private name, id, path, host, person, or credential enters any file or commit. This planning run commits the plan file alone and pushes nothing.
+- **Who ships:** `ce-work` implements the units PR by PR in this worktree; the repository's merge queue merges each PR in stack order. Publishing stays with the release workflow and is out of scope here.
 
 ---
 
 ## Product Contract
+
+Product Contract preservation: unchanged. This enrichment adds the Planning Contract, Implementation Units, Verification Contract, and Definition of Done around the existing R1-R32, F1-F5, AE1-AE10, scope, and assumptions.
 
 ### Summary
 
@@ -195,6 +200,417 @@ Changing an aggregate's query has three possible mechanisms: refuse and leave th
 
 ---
 
+## Planning Contract
+
+### Key Technical Decisions
+
+- KTD1. **One snapshot-driven pipeline, no special case for aggregates.** Every object follows the existing `defs` factory → `collectExtras` → `snapshotExtras` → `diffSnapshots` → `journal` path. A `continuousAggregate` is a new `PgExtras.continuousAggregates` array and a new `Snapshot.continuousAggregates` array; `generate`, `check`, `renderIdempotent`, and the CLI stay unchanged. This is what gives the feature diff, down SQL, and idempotent render without a second code path.
+- KTD2. **SQL builders stay pure and live in `src/timescale-sql.ts`.** Each new statement is a function from a snapshot entry to SQL text, mirroring `createHypertableStatements` and the policy builders. The factories in `defs.ts` validate declarations; `diff.ts` orders statements; neither embeds SQL.
+- KTD3. **Aggregate DDL is two-phase, not one block.** In `statementsBetween`, aggregate drops and rebuild drops run before function drops (an aggregate query may call a package function). Aggregate creates and alters run after function creates, extensions, and hypertable conversion, and before comments. Down SQL uses the same function with `from` and `to` swapped. A rebuild is therefore one drop in the early phase and one create in the late phase.
+- KTD4. **A source table cannot be removed in the same change as its aggregate.** R3 requires the aggregate to be removed with its source; kit's `DROP TABLE` migration sorts and runs before the extras migration, so a same-change removal produces a migration that fails at the table drop. `generate` throws with the two-step instruction: remove the aggregate, generate and migrate, then remove the table. The product intent (never orphan an aggregate) is preserved; the mechanism is one step stricter than R3's wording.
+- KTD5. **Comments follow the object through rebuild and drop.** A rebuild drops the view, so its comment must be re-emitted even when the text is unchanged. A dropped aggregate must skip `COMMENT ... IS NULL` because the object is already gone while the `.existing()` view remains in inventory. `diff.ts` tracks rebuilt and dropped aggregate IDs for `commentRewritten` / `skipCommentNull`.
+- KTD6. **The columnstore rename is read only at the snapshot boundary.** The public TypeScript config and every emitted statement use the columnstore names. `parseSnapshot` maps an old `compression` / `compressionPolicy` / `compressAfter` entry to the new fields and preserves `scheduleInterval`; U3 adds the new optional arguments. `version` stays `1`, and the new fields are optional on read. The old names appear nowhere else in `src/`.
+- KTD7. **Generalized dimensions, with the one documented loss.** `create_hypertable` takes `by_range`; a space dimension is a second `add_dimension(..., by_hash(...))` statement; `create_default_indexes` is emitted only when `false`. `migrateData: true` with a space dimension throws in the factory, because `add_dimension` only runs on an empty hypertable. A later chunk interval change keeps `set_chunk_time_interval`, which TimescaleDB 2.32.1 still documents; a later space-dimension change keeps throwing.
+- KTD8. **A refresh policy's identity is its start/end window.** Policies are matched by the normalized pair, not array order. A changed schedule or option on a matched window removes and re-adds that policy; a new window adds; a missing window removes. Two entries with the same pair throw. `null` offsets render `NULL` and remain valid identities.
+- KTD9. **Sparse indexes are structured config, not a pass-through string.** `{ type: 'bloom' | 'minmax', columns }` entries are validated against the documented restrictions, rendered to the TimescaleDB `bloom(...)` / `minmax(...)` grammar, and sorted for a stable diff. `orderBy` is required. The validation rejects the hard errors the server would reject at migrate time; it allows the documented composite-bloom and minmax-on-orderby cases.
+- KTD10. **The PR stack is the delivery unit.** Four PRs, one concern each, at most ~400 changed non-test lines, bottom-up; each carries a changeset and green `checks / check` on the pinned 2.32.1 image. A unit that pushes its PR past the ceiling becomes its own PR with its own changeset, inserted in the stack. The owner-directed order puts the hypertable vocabulary first and the aggregate stack second.
+
+### High-Level Technical Design
+
+The new declarations join the existing pipeline; the only new branch is the old-snapshot normalization.
+
+```mermaid
+flowchart TB
+  A[defs factories] --> B[collectExtras]
+  B --> C[snapshotExtras]
+  D[existing _pg-extras.json] --> E[parseSnapshot: compression keys to columnstore]
+  C --> F[diffSnapshots]
+  E --> F
+  F --> G[up: ordered phases]
+  F --> H[down: same diff, from and to swapped]
+  G --> I[writeMigration]
+```
+
+Ordering inside one migration, after the change:
+
+| Phase | Up statements | Why this position |
+| --- | --- | --- |
+| 1 | Aggregate drops and rebuild drops | Before function drops, because a query may call a dropped function |
+| 2 | Function drops, partition changes, function-dependent trigger drops | Existing order |
+| 3 | Extension create/alter, hypertable conversion | Source exists before an aggregate |
+| 4 | Function creates | A query may call a package function |
+| 5 | Aggregate creates/alters, refresh policies, columnstore and retention | Source and functions now exist |
+| 6 | Comments, including re-emitted aggregate comments | The object exists |
+| 7 | Trigger bodies and extension drops | Existing order; skip `timescaledb` while aggregates remain |
+
+### PR Stack
+
+Each PR is one concern, targets the previous branch, and carries its own changeset. Estimated lines are net non-test lines in `packages/drizzle-pg-extras/src` plus `README.md`; test edits are excluded.
+
+| PR | Concern | Units | Non-test lines (est.) | Waits on |
+| --- | --- | --- | --- | --- |
+| PR1 | Hypertable current vocabulary | U1-U3 | ~360 | Nothing; targets `main` |
+| PR2 | Continuous aggregates: declaration and DDL | U4-U7 | ~380 | PR1 merge; the aggregate snapshot reuses the columnstore and dimension shapes |
+| PR3 | Aggregate policies and storage | U8-U9 | ~260 | PR2 merge; policies and storage attach to the aggregate model |
+| PR4 | Sparse indexes and reorder | U10-U11 | ~230 | PR3 merge order only; it needs PR1's columnstore config and nothing from PR2/PR3 |
+
+Why four: the owner required a reviewable stack and a ~400-line ceiling per PR, and each group is a separate consumer-visible concern (hypertable vocabulary, aggregate DDL, aggregate policies/storage, hypertable index and reorder surface). PR2 and PR3 depend on the aggregate model; PR4 is independent of the aggregate work but is ordered last by the downstream priority. The stack is linked with `gh stack link` after each commit and kept current with `gh stack sync`, per the repository's stacked-PR rule; no hand-set bases.
+
+### Planning Assumptions
+
+- PA1. `CREATE MATERIALIZED VIEW IF NOT EXISTS ... WITH (timescaledb.continuous)` is accepted (Product A1); the PR2 integration test proves it.
+- PA2. `CALL convert_to_rowstore(chunk, if_columnstore => TRUE)` is valid inside a PL/pgSQL `DO` loop and does not commit; the PR1 integration test proves it on 2.32.1.
+- PA3. The new aggregate integration file fits the existing `timescale` job's 30-minute timeout; the job already installs and migrates scratch projects.
+- PA4. The snapshot stays at version `1`; new fields are optional on read and always written. No version bump or migration command is needed.
+- PA5. `getMaterializedViewConfig(view).isExisting` exposes the `.existing()` flag the declaration check needs; it is the same config the comment harvester already reads.
+- PA6. The estimates are net non-test lines; a PR that exceeds ~400 splits its trailing unit into a new PR and changeset rather than compressing the unit.
+- PA7. The source-removal rule is two-step (KTD4); this is stricter than R3's wording and is recorded in the PR2 unit and the README limits.
+
+### Documentation Plan
+
+README updates ship with the PR that changes the behavior, so `main` never documents a surface it does not have. Each PR's changeset body states the consumer-visible addition or break.
+
+- PR1 adds the columnstore rows, the `by_range` equivalence, retention variants, the 2.29.0 floor, the deprecated-name note, and the CI image/version line (R24, R28, R29).
+- PR2 adds the aggregate declaration, `WITH NO DATA` backfill, hierarchy, real-time, chunk interval, and group-index rows (R23, R28).
+- PR3 adds refresh-policy arguments, aggregate columnstore, and aggregate retention rows, plus the aggregate limits (R28).
+- PR4 adds bloom/minmax sparse indexes, reorder, and the preview/experimental rows (R25-R28).
+
+### Risks and Dependencies
+
+- **Breaking rename (PR1).** Every existing `hypertable()` caller sees a compile error on `compression`; the changeset and README map the keys. Mitigation: the rename is one PR, the snapshot upgrade is tested, and no alias is left behind.
+- **Snapshot upgrade re-emits SQL.** A normalization mistake would generate a migration on upgrade. Mitigation: a unit test builds an old snapshot and asserts `diffSnapshots` is empty against the equivalent new declaration.
+- **Aggregate rebuild loses materialized data.** The up comment states it and the child guard blocks a rebuild that would drop declared children. Mitigation: the rebuild path is a distinct unit test plus an integration run.
+- **Kit's table drop precedes the extras drop (KTD4).** A same-change source removal cannot work. Mitigation: the factory throws with the two-step instruction; the README limit says it.
+- **Comment loss on rebuild/drop.** Mitigation: KTD5 and explicit test scenarios for re-emitted comments and skipped null comments.
+- **Procedure/function mismatch.** `convert_to_rowstore` is a procedure; `PERFORM` would fail. Mitigation: the disable path uses `CALL` in a `FOR` loop and the integration test reads back zero columnstore chunks.
+- **Stack rebases.** PR2-PR4 are rewritten when a lower PR changes. Mitigation: small PRs, `gh stack sync`, and no unrelated edits in the shared files.
+- **Timescale API drift before merge.** The surface is pinned to 2.32.1; a newer release changes the matrix and the image together (Product A8).
+
+### Deferred to Implementation
+
+- Exact helper names and SQL whitespace; the shapes in KTD2 and the units are directional.
+- Whether the aggregate declaration validation lives in one factory helper or two (name form and view form); both overloads must behave identically.
+- The final test fixture dates and whether the aggregate integration test reuses the existing scratch-project helpers or adds local ones.
+- Whether the `commentRewritten` change is a parameter or a second pass; the behavior is fixed, the mechanism is not.
+
+---
+
+## Implementation Units
+
+Unit Index (navigation only; unit bodies are authoritative):
+
+| Unit | Title | Files touched | Depends on |
+| --- | --- | --- | --- |
+| U1 | Columnstore rename and snapshot upgrade | `defs.ts`, `snapshot.ts`, `timescale-sql.ts`, `diff.ts`, `index.ts`, README | none |
+| U2 | Generalized hypertable creation | `defs.ts`, `timescale-sql.ts`, `diff.ts`, `index.ts` | U1 |
+| U3 | Retention variants and columnstore policy arguments | `defs.ts`, `snapshot.ts`, `timescale-sql.ts`, `diff.ts` | U1 |
+| U4 | Aggregate declaration and collection | `defs.ts`, `collect.ts`, `index.ts` | PR1 |
+| U5 | Aggregate snapshot and normalization | `snapshot.ts` | U4 |
+| U6 | Aggregate DDL, rebuild, and ordering | `timescale-sql.ts`, `diff.ts` | U5 |
+| U7 | Aggregate integration coverage | `tests/integration/timescale-aggregates.test.ts`, README | U6 |
+| U8 | Multiple refresh policies with current arguments | `defs.ts`, `snapshot.ts`, `timescale-sql.ts`, `diff.ts` | PR2 |
+| U9 | Aggregate columnstore, columnstore policy, and retention | `defs.ts`, `snapshot.ts`, `timescale-sql.ts`, `diff.ts` | U8 |
+| U10 | Sparse indexes | `defs.ts`, `snapshot.ts`, `timescale-sql.ts`, `diff.ts` | PR1 |
+| U11 | Reorder policy | `defs.ts`, `snapshot.ts`, `timescale-sql.ts`, `diff.ts` | PR1 |
+
+### PR1: Hypertable Current Vocabulary
+
+Waits on: nothing; targets `main`.
+
+**Expected non-test lines:** ~360. If U3 exceeds the ceiling after U1-U2, U3 becomes its own PR with its own changeset, inserted immediately after PR1; every later group shifts by one and the stack is re-linked.
+
+#### U1. Columnstore Rename and Snapshot Upgrade
+
+- **Goal:** A hypertable declaration, snapshot, and generated SQL use the columnstore vocabulary, and an old snapshot upgrades without producing a migration.
+- **Requirements:** R13, R14, R19, R20, R22, R23, R28.
+- **Dependencies:** none.
+- **Files:** `packages/drizzle-pg-extras/src/defs.ts`; `src/snapshot.ts`; `src/timescale-sql.ts`; `src/diff.ts`; `src/index.ts`; `README.md`; `tests/unit/timescale.test.ts`; `tests/integration/timescale.test.ts`.
+- **Approach:**
+  1. Rename the public and internal compression names to `columnstore`, `columnstorePolicy`, `after`, `createdBefore`, and the matching snapshot and SQL helper names; update the factory validation and `diff.ts` references.
+  2. Replace the emitted SQL with `ALTER TABLE ... SET (timescaledb.enable_columnstore, timescaledb.segmentby = ..., timescaledb.orderby = ...)`, `CALL add_columnstore_policy(...)`, and `CALL remove_columnstore_policy(...)`.
+  3. Replace the disable path with a `DO` block that locks the table, loops over `show_chunks(<relation>)`, calls `convert_to_rowstore(chunk, if_columnstore => TRUE)` per chunk, and then sets `timescaledb.enable_columnstore = false`.
+  4. In `parseSnapshot`/`normalizeHypertable`, read `compression`, `compressionPolicy`, and `compressAfter` and map them to `columnstore`, `columnstorePolicy`, and `after`, preserving `scheduleInterval`; U3 adds the alternate variants and the remaining scheduling fields.
+  5. Update `undoHypertable`, `alterHypertable`, `idempotentStatements`, and the exports; update the README's hypertable rows and the deprecated-name note.
+- **Patterns to follow:** `createHypertableStatements` and `alterHypertable` for statement assembly; `normalizeTrigger` for tolerant snapshot parsing; `disableHypertableCompressionSql` for the lock-and-loop shape.
+- **Test scenarios:**
+  - A declared columnstore with `segmentBy` and `orderBy` renders `enable_columnstore`, `segmentby`, and `orderby`, not `compress`.
+  - A columnstore policy with `after` renders `CALL add_columnstore_policy` with `if_not_exists => TRUE`; a policy with `createdBefore` renders `created_before`.
+  - Removing the columnstore renders a `DO` block with `CALL convert_to_rowstore` per chunk and `enable_columnstore = false`, and does not contain `decompress_chunk` or `PERFORM`.
+  - An old snapshot with `compression: { segmentBy, orderBy }` and `compressionPolicy: { compressAfter }` normalizes to the new fields and `diffSnapshots` produces no up or down statements against the equivalent new declaration.
+  - Removing the columnstore and its policy removes the policy first, then disables the columnstore in the same migration.
+  - The integration test reads `timescaledb_information.hypertable_columnstore_settings` after migrate and finds the declared segment and order columns.
+- **Verification:** the unit suite covers the SQL and upgrade cases; the Timescale job shows the settings in the catalog and the disable path leaves no columnstore chunks.
+
+#### U2. Generalized Hypertable Creation
+
+- **Goal:** A new hypertable is created with `by_range` and an optional `by_hash` space dimension, and the unsupported `migrateData` combination fails before SQL is written.
+- **Requirements:** R16, R17, R24, R28.
+- **Dependencies:** U1.
+- **Files:** `packages/drizzle-pg-extras/src/defs.ts`; `src/timescale-sql.ts`; `src/diff.ts`; `src/index.ts`; `tests/unit/timescale.test.ts`; `tests/integration/timescale.test.ts`; `README.md`.
+- **Approach:**
+  1. Emit `create_hypertable(<regclass>, by_range('<time>'[, INTERVAL '<chunk>']), if_not_exists => TRUE[, migrate_data => TRUE])`; append `create_default_indexes => FALSE` only when the declaration sets it false.
+  2. Emit `add_dimension(<regclass>, by_hash('<column>', <n>), if_not_exists => TRUE)` for a declared space dimension, and change the later-dimension path to the same builder.
+  3. Throw in `hypertable()` when `migrateData` is true and `partitioningColumn` is set; keep the later chunk-interval change on `set_chunk_time_interval`.
+  4. Keep the existing key-coverage validation and the empty-hypertable warning for a later dimension.
+- **Patterns to follow:** `createHypertableSql`, `addHypertableDimensionSql`, and `readBound` validation.
+- **Test scenarios:**
+  - A time-only hypertable renders `by_range('time')` and no positional `'time'::name` argument.
+  - A hypertable with a chunk interval renders `by_range('time', INTERVAL '1 day')`.
+  - A space dimension renders a second `add_dimension(..., by_hash('device_id', 4), if_not_exists => TRUE)`.
+  - `createDefaultIndexes: false` renders `create_default_indexes => FALSE`; the default omits the argument.
+  - `migrateData: true` with a space dimension throws and writes no snapshot.
+  - A later chunk interval change still renders `set_chunk_time_interval`.
+  - The integration test finds four hash partitions after migrate.
+- **Verification:** unit SQL assertions and the integration partition count.
+
+#### U3. Retention Variants and Columnstore Policy Arguments
+
+- **Goal:** Retention accepts `drop_after` or `drop_created_before`, and columnstore and retention policies accept the current scheduling arguments.
+- **Requirements:** R13, R14, R23, R28.
+- **Dependencies:** U1.
+- **Files:** `packages/drizzle-pg-extras/src/defs.ts`; `src/snapshot.ts`; `src/timescale-sql.ts`; `src/diff.ts`; `tests/unit/timescale.test.ts`; `tests/integration/timescale.test.ts`; `README.md`.
+- **Approach:**
+  1. Widen the retention and columnstore-policy snapshot shapes with `dropCreatedBefore` / `createdBefore`, `initialStart`, and `timezone`, all nullable.
+  2. Validate exactly one of `dropAfter` / `dropCreatedBefore` and one of `after` / `createdBefore`; normalize intervals and accept a timestamp string for `initialStart`.
+  3. Render the chosen argument plus the optional scheduling arguments; keep remove-then-add for a change.
+  4. Keep the existing ordering: remove policy before disabling the columnstore.
+- **Patterns to follow:** `readRetention`, `readCompressionPolicy`, `policySql`.
+- **Test scenarios:**
+  - `retention.dropCreatedBefore` renders `drop_created_before`; `dropAfter` renders `drop_after`.
+  - Setting both retention variants throws; setting neither throws.
+  - `columnstorePolicy.createdBefore` renders `created_before`; setting both columnstore variants throws.
+  - A `scheduleInterval`, `initialStart`, and `timezone` render as named arguments.
+  - Changing a retention or columnstore policy emits remove then add, not an alter.
+  - An old snapshot without the new scheduling fields normalizes to `null` and produces no diff.
+- **Verification:** unit SQL and diff assertions; the integration test reads the policy interval and schedule from `timescaledb_information.jobs`.
+
+### PR2: Continuous Aggregates — Declaration and DDL
+
+Waits on: PR1 (merge only). Separate because the aggregate model reuses PR1's columnstore and dimension shapes, and the owner's ~400-line ceiling keeps the declaration/DDL work apart from the policy/storage work.
+
+**Expected non-test lines:** ~380. If U6 exceeds the ceiling, U7 and the rebuild/comment scenarios move to a new PR between PR2 and PR3; the stack is re-linked.
+
+#### U4. Aggregate Declaration and Collection
+
+- **Goal:** `continuousAggregate()` is a first-class extras declaration with validated name, view, query, source, and options.
+- **Requirements:** R1, R2, R3.
+- **Dependencies:** PR1.
+- **Files:** `packages/drizzle-pg-extras/src/defs.ts`; `src/collect.ts`; `src/index.ts`; `tests/unit/aggregates.test.ts`.
+- **Approach:**
+  1. Add the `continuousAggregate` kind and the PR2 declaration type with name/schema, `query: string | SQL`, optional `source`, `realTime`, `chunkInterval`, and `createGroupIndexes`; U8 and U9 extend the same type with refresh policies and storage.
+  2. Accept either `(name, config)` or `(view, config)`; a view must be a `pgMaterializedView(...).existing()` and supplies name, schema, and the comment target.
+  3. Validate the query is non-empty, the source is a declared hypertable or aggregate, and the source graph has no cycle; reject a duplicate declaration.
+  4. Add the array to `PgExtras`, `collectExtras`, `defineExtras`, and `walk`; export the new type and factory.
+- **Patterns to follow:** `hypertable()` overloads and validation; `extrasKind`; `walk`'s existing kind branches.
+- **Test scenarios:**
+  - A name declaration is collected and appears once in `extras.continuousAggregates`.
+  - An `.existing()` materialized view supplies name, schema, and columns; a non-existing view throws and names `.existing()`.
+  - A `SQL` query with a table reference renders with the project casing at snapshot time.
+  - A source named as a hypertable and a source named as an aggregate both validate; an undeclared source throws.
+  - A two-node source cycle throws; a duplicate declaration throws.
+  - The same declaration exported twice is collected once.
+- **Verification:** unit tests; `pnpm typecheck` proves the overloads.
+
+#### U5. Aggregate Snapshot and Normalization
+
+- **Goal:** The snapshot records every aggregate field, round-trips it, and loads a snapshot that predates aggregates.
+- **Requirements:** R3, R20.
+- **Dependencies:** U4.
+- **Files:** `packages/drizzle-pg-extras/src/snapshot.ts`; `tests/unit/aggregates.test.ts`.
+- **Approach:**
+  1. Add `ContinuousAggregateSnapshot` with the PR2 fields: id, schema, name, rendered query, source kind/schema/name, realTime, chunkInterval, and createGroupIndexes. U8 and U9 extend the same entry with refresh policies and storage; R20 is fully met after PR3.
+  2. Add `continuousAggregates` to `Snapshot`, `emptySnapshot`, `snapshotExtras`, `parseSnapshot`, and the sort list; normalize optional fields to stable nulls.
+  3. Resolve the source identity from the branded declaration; keep the id `['continuousAggregate', schema, name]`.
+  4. Keep `version: 1`; a missing array reads as empty.
+- **Patterns to follow:** `snapshotHypertable`, `normalizeTrigger`, and the existing sort blocks.
+- **Test scenarios:**
+  - A declaration round-trips through `snapshotExtras` and `parseSnapshot` with identical fields.
+  - A snapshot without `continuousAggregates` loads as an empty array.
+  - A source records the correct kind and schema for a hypertable and for a parent aggregate.
+  - Two declarations sort by id regardless of export order.
+  - The rendered query text is stored, not the `SQL` object.
+- **Verification:** unit round-trip and legacy-load tests.
+
+#### U6. Aggregate DDL, Rebuild, and Ordering
+
+- **Goal:** Aggregates are created `WITH NO DATA`, altered in place where TimescaleDB allows it, rebuilt when the definition changes, dropped child-first, and commented after creation.
+- **Requirements:** R3-R6, R10-R12, R21-R23.
+- **Dependencies:** U5.
+- **Files:** `packages/drizzle-pg-extras/src/timescale-sql.ts`; `src/diff.ts`; `tests/unit/aggregates.test.ts`.
+- **Approach:**
+  1. Add pure builders for create, real-time alter, chunk-interval alter, and drop; create emits `IF NOT EXISTS ... WITH NO DATA` and the declared `chunk_interval` / `create_group_indexes` / `materialized_only`. U8 adds the policy builders.
+  2. Add `continuousAggregateChanges` with a removals pass and a creations pass, placed per KTD3; rebuild on query/source/`createGroupIndexes` changes; alter real-time and chunk interval without a rebuild.
+  3. Guard a rebuild when a declared child sources the aggregate; throw with the stack and the two-step repair.
+  4. Order creates parent-first and drops child-first by walking the source graph; throw on a missing source with the two-step removal from KTD4.
+  5. Track rebuilt and dropped ids for comment re-emission and null-comment skipping; add the aggregates to `idempotentStatements` and the `timescaledb` extension-drop guard.
+- **Patterns to follow:** `hypertableChanges`, `undoHypertable`, `alterHypertable`, `emitComments`, and the `timescaledb` drop skip.
+- **Test scenarios:**
+  - A create renders `CREATE MATERIALIZED VIEW IF NOT EXISTS ... WITH (timescaledb.continuous) ... WITH NO DATA`; real-time adds `materialized_only = false`; a chunk interval adds `chunk_interval`; `createGroupIndexes: false` adds `create_group_indexes = false`.
+  - A real-time change renders only `ALTER MATERIALIZED VIEW ... SET (materialized_only = ...)`.
+  - A chunk-interval change renders only the `chunk_interval` alter.
+  - A query change renders drop then create; U8 adds the policy re-add case.
+  - A changed parent with a declared child throws and writes no migration.
+  - A removed aggregate renders `DROP MATERIALIZED VIEW IF EXISTS`; a removed source table with a removed aggregate throws the two-step instruction.
+  - Two levels create parent-first and drop child-first.
+  - A rebuild re-emits the view comment; a drop does not emit `COMMENT ... IS NULL`.
+  - Down SQL recreates the previous definition `WITH NO DATA` and never calls `refresh_continuous_aggregate`; U8 extends the down path with the policies.
+- **Verification:** unit SQL and diff tests; the PR2 integration test exercises a live stack.
+
+#### U7. Aggregate Integration Coverage
+
+- **Goal:** A real 2.32.1 server accepts a two-level stack through `drizzle-kit migrate`, a second generate is a no-op, and a leaf rebuild and its down file behave as declared.
+- **Requirements:** R30 (the declaration, DDL, rebuild, and down portions), R21-R23, R28.
+- **Dependencies:** U6.
+- **Files:** `packages/drizzle-pg-extras/tests/integration/timescale-aggregates.test.ts`; `packages/drizzle-pg-extras/README.md`.
+- **Approach:**
+  1. Use the existing integration patterns: a scratch project, `drizzle-kit generate`, `drizzle-pg-extras generate`, `drizzle-kit migrate`, and a direct `pg` client for catalog assertions.
+  2. Assert both aggregates in `timescaledb_information.continuous_aggregates` for the fields this PR implements.
+  3. Run the second generator and assert no new file; change one leaf query and assert the rebuild and the down file.
+  4. Add the README aggregate section and the `WITH NO DATA` backfill note.
+- **Patterns to follow:** `tests/integration/timescale.test.ts` for `mkdtemp`, `kitExec`, `migrationFile`, and `reset`.
+- **Test scenarios:**
+  - A two-level stack migrates; both views exist and the child selects from the parent.
+  - A second generate writes no file.
+  - Real-time on and a chunk interval are visible after migrate.
+  - A leaf query change produces one migration with drop and create; the down file restores the previous definition.
+  - A parent query change with a declared child fails before writing.
+  - Removing the stack then the source table works as two steps; a one-step removal fails with the instruction.
+- **Verification:** the CI `timescale` job runs the file with `TIMESCALE_URL`; locally it skips without the URL.
+
+### PR3: Aggregate Policies and Storage
+
+Waits on: PR2 (merge only). Separate because refresh policies, aggregate columnstore, and aggregate retention attach to the aggregate model and are a distinct consumer surface; the ceiling keeps them out of PR2.
+
+**Expected non-test lines:** ~260. If U9 exceeds the ceiling, aggregate retention moves to its own PR after PR3.
+
+#### U8. Multiple Refresh Policies with Current Arguments
+
+- **Goal:** One aggregate declares any number of non-overlapping refresh policies with the current TimescaleDB arguments.
+- **Requirements:** R7, R20, R23, R28.
+- **Dependencies:** U6.
+- **Files:** `packages/drizzle-pg-extras/src/defs.ts`; `src/snapshot.ts`; `src/timescale-sql.ts`; `src/diff.ts`; `tests/unit/aggregates.test.ts`; `tests/integration/timescale-aggregates.test.ts`; `README.md`.
+- **Approach:**
+  1. Extend the PR2 declaration type and snapshot entry with `refreshPolicies`. Each entry carries `startOffset` / `endOffset` (interval or `null`), `scheduleInterval`, `initialStart`, `timezone`, `includeTieredData`, `bucketsPerBatch`, `maxBatchesPerExecution`, and `refreshNewestFirst`.
+  2. Normalize and key policies by the start/end pair; reject duplicate pairs and missing required fields.
+  3. Render `SELECT add_continuous_aggregate_policy(...)` with `if_not_exists => TRUE`; remove with `remove_continuous_aggregate_policy(..., if_exists => TRUE)`.
+  4. Diff: add new pairs, remove missing pairs, remove-and-add changed options on a matched pair, independent of array order.
+- **Patterns to follow:** `policySql`; the retention remove-then-add diff.
+- **Test scenarios:**
+  - Two non-overlapping policies render two add statements in the create migration.
+  - Reordering the array produces no diff.
+  - A changed schedule on one pair removes and re-adds only that pair.
+  - Removing one pair emits only its remove.
+  - A duplicate start/end pair throws.
+  - `null` start or end renders `NULL` and round-trips.
+  - `includeTieredData`, `bucketsPerBatch`, `maxBatchesPerExecution`, and `refreshNewestFirst` render as named arguments.
+  - The integration test finds both jobs with the declared windows and schedules.
+- **Verification:** unit diff tests and the integration jobs view.
+
+#### U9. Aggregate Columnstore, Columnstore Policy, and Retention
+
+- **Goal:** An aggregate declares columnstore settings, a columnstore policy with `after`, and a retention policy with `drop_after`; unsupported variants throw.
+- **Requirements:** R8, R9, R20, R23, R28, R30.
+- **Dependencies:** U8.
+- **Files:** `packages/drizzle-pg-extras/src/defs.ts`; `src/snapshot.ts`; `src/timescale-sql.ts`; `src/diff.ts`; `tests/unit/aggregates.test.ts`; `tests/integration/timescale-aggregates.test.ts`; `README.md`.
+- **Approach:**
+  1. Extend the declaration type and snapshot entry with aggregate `columnstore` and `columnstorePolicy` (`after` only) and aggregate `retention` (`dropAfter` only).
+  2. Render `ALTER MATERIALIZED VIEW ... SET (enable_columnstore, segmentby, orderby)`, `CALL add_columnstore_policy(<name>, after => ..., if_not_exists => TRUE)`, and `add_retention_policy(<name>, drop_after => ..., if_not_exists => TRUE)`.
+  3. Reuse the remove-then-add and disable-loop behavior from U1/U3 with the aggregate relation.
+  4. Throw when `createdBefore` or `dropCreatedBefore` is used on an aggregate.
+- **Patterns to follow:** U1's columnstore builders, U3's policy builders, and the hypertable diff branches.
+- **Test scenarios:**
+  - Aggregate columnstore settings render an `ALTER MATERIALIZED VIEW`, not an `ALTER TABLE`.
+  - An aggregate columnstore policy renders `CALL add_columnstore_policy`; `createdBefore` throws.
+  - Aggregate retention renders `add_retention_policy`; `dropCreatedBefore` throws.
+  - Removing the aggregate columnstore converts chunks with `convert_to_rowstore` and disables the columnstore.
+  - The integration test reads the aggregate's columnstore settings and retention job.
+- **Verification:** unit SQL tests and the integration catalog assertions.
+
+### PR4: Sparse Indexes and Reorder
+
+Waits on: PR3 (merge order only). Separate because combining it with PR3 would exceed the owner's ~400-line ceiling; it needs PR1's columnstore config and nothing from PR2/PR3, and the downstream priority orders the aggregate work ahead of it.
+
+**Expected non-test lines:** ~230. If U10 plus U11 exceeds the ceiling, U11 moves to a fifth PR with its own changeset.
+
+#### U10. Sparse Indexes
+
+- **Goal:** A hypertable declares bloom and minmax sparse indexes with the documented validation, rendered into the columnstore settings.
+- **Requirements:** R15, R20, R23, R28.
+- **Dependencies:** U1.
+- **Files:** `packages/drizzle-pg-extras/src/defs.ts`; `src/snapshot.ts`; `src/timescale-sql.ts`; `src/diff.ts`; `tests/unit/timescale.test.ts`; `tests/integration/timescale.test.ts`; `README.md`.
+- **Approach:**
+  1. Add `columnstore.sparseIndex` as a list of `{ type: 'bloom' | 'minmax', columns }`; resolve columns like `segmentBy`/`orderBy`.
+  2. Require `orderBy`; reject bloom/minmax on a `segmentBy` column, a single-column bloom on an `orderBy` column, and two single-column indexes on the same column; allow a composite bloom that includes the orderby column and minmax on the orderby column.
+  3. Render the sorted entries into one `timescaledb.sparse_index = 'bloom(...), minmax(...)'` option in the same `ALTER TABLE`.
+  4. A change re-applies the setting; the README states that it applies to chunks converted after the change, with existing chunks unchanged.
+- **Patterns to follow:** `readOrder` and `assertDistinctColumns`; the columnstore enable builder.
+- **Test scenarios:**
+  - `bloom(device_id), minmax(cpu)` renders as one quoted `timescaledb.sparse_index` option.
+  - A single-column bloom on the orderby column throws; a composite bloom including it renders.
+  - Bloom or minmax on a segmentby column throws.
+  - Two single-column indexes on one column throw.
+  - Sparse indexes without orderBy throw.
+  - Reordering the entries produces no diff.
+  - The integration test reads the setting from `hypertable_columnstore_settings` or the chunk settings view.
+- **Verification:** unit validation/render tests and the integration settings read.
+
+#### U11. Reorder Policy
+
+- **Goal:** A hypertable declares one reorder policy for a named index, and it is added, removed, and replaced correctly.
+- **Requirements:** R18, R20, R21, R23, R28.
+- **Dependencies:** U1.
+- **Files:** `packages/drizzle-pg-extras/src/defs.ts`; `src/snapshot.ts`; `src/timescale-sql.ts`; `src/diff.ts`; `tests/unit/timescale.test.ts`; `tests/integration/timescale.test.ts`; `README.md`.
+- **Approach:**
+  1. Add `reorder: { index: string }` to the hypertable declaration; validate the index name is non-empty and only one policy is declared.
+  2. Render `add_reorder_policy(<regclass>, '<index>'::name, if_not_exists => TRUE)`; remove with `remove_reorder_policy(..., if_exists => TRUE)`.
+  3. A changed index removes and re-adds; a removed declaration removes; down re-adds a policy the up file removed.
+  4. Keep the policy in `idempotentStatements`.
+- **Patterns to follow:** `addRetentionPolicySql` and the retention diff branch.
+- **Test scenarios:**
+  - A reorder declaration renders the add statement with the index name.
+  - A changed index renders remove then add.
+  - Removing the declaration renders the remove; the down file re-adds it.
+  - A second reorder declaration on the same hypertable throws.
+  - The integration test finds the reorder job and its index.
+- **Verification:** unit SQL/diff tests and the integration jobs view.
+
+---
+
+## Verification Contract
+
+| Check | Applies to | Command or evidence |
+| --- | --- | --- |
+| Install | all PRs | `pnpm install --frozen-lockfile` |
+| Format | all PRs | `pnpm format:check` |
+| Typecheck | all PRs | `pnpm --filter @systemfsoftware/drizzle-pg-extras run typecheck` |
+| Lint | all PRs | `pnpm --filter @systemfsoftware/drizzle-pg-extras run lint` |
+| Unit tests | all PRs | `pnpm --filter @systemfsoftware/drizzle-pg-extras exec vitest run tests/unit` |
+| Build | all PRs | `pnpm build` |
+| Timescale integration | PR1-PR4 | CI job `timescale` with `TIMESCALE_URL` on `timescale/timescaledb:2.32.1-pg16`; runs `pnpm test`, including `tests/integration/timescale.test.ts` and `tests/integration/timescale-aggregates.test.ts` |
+| Aggregate checks | each PR | `.github/workflows/ci.yml` job `checks / check` green on the PR head |
+| PR size | each PR | `git diff --shortstat <base>...HEAD -- ':!packages/drizzle-pg-extras/tests/**'` reports at or below ~400 changed non-test lines (insertions plus deletions) |
+| Changeset | each PR | one new `.changeset/*.md` intent for `@systemfsoftware/drizzle-pg-extras`, with the consumer-visible line |
+| Stack linkage | PR2-PR4 | `gh stack link <lower-branch-or-PR> <branch>`; the PR base is the lower branch, not `main` |
+| Snapshot upgrade | PR1 | the unit test builds an old compression snapshot and asserts an empty diff against the equivalent columnstore declaration |
+| Rebuild and down | PR2-PR3 | the integration file applies a changed leaf query and the down file, then asserts the catalog and data |
+
+Local integration is not run on this host: there is no `TIMESCALE_URL`, and the repository's rule keeps service-backed tests in CI. The PR is not merge-ready until the `timescale` job and `checks / check` are green.
+
+---
+
+## Definition of Done
+
+- R1-R32 are implemented and traceable to the units above; the Product Contract is unchanged.
+- PR1-PR4 are merged in stack order, each with a green `checks / check` (including `timescale` on 2.32.1), a changeset, and at most ~400 net non-test lines.
+- An old `_pg-extras.json` with compression keys loads and produces no migration against the equivalent columnstore declaration; no public compatibility alias exists.
+- The README surface matrix is complete: every row says declared or not declared with the reason, the current names are used, deprecated names appear only in the upgrade note, and the 2.29.0 floor and tested 2.32.1 release are stated.
+- The aggregate integration test proves a two-level stack through `drizzle-kit migrate`, a no-op second generate, real-time and chunk-interval changes, a leaf rebuild, the down file, and the two-step source removal.
+- The disable path uses `CALL convert_to_rowstore` per chunk and leaves zero columnstore chunks; the integration test observes it.
+- No dead helper, unused export, dual SQL name, or commented-out alternative remains; the only old-name code is the `parseSnapshot` normalization and the README migration note.
+- No scratch project, temporary file, or service container remains; no credential, private name, path, host, or person appears in any file or commit.
+
+---
+
 ## Sources and Research
 
 - Releases surveyed: [2.32.1, 2026-11-19](https://github.com/timescale/timescaledb/releases/tag/2.32.1) (latest), [2.32.0](https://github.com/timescale/timescaledb/releases/tag/2.32.0), [2.31.0](https://github.com/timescale/timescaledb/releases/tag/2.31.0), [2.30.0](https://github.com/timescale/timescaledb/releases/tag/2.30.0), [2.29.0](https://github.com/timescale/timescaledb/releases/tag/2.29.0), [2.28.0](https://github.com/timescale/timescaledb/releases/tag/2.28.0), [2.26.0](https://github.com/timescale/timescaledb/releases/tag/2.26.0), and the [CHANGELOG](https://github.com/timescale/timescaledb/blob/main/CHANGELOG.md).
@@ -204,4 +620,6 @@ Changing an aggregate's query has three possible mechanisms: refuse and leave th
 - Granular refresh evidence: [PR #10299 (catalogs)](https://github.com/timescale/timescaledb/pull/10299), [PR #10546 (disable API)](https://github.com/timescale/timescaledb/pull/10546), [PR #10588 (offset changes)](https://github.com/timescale/timescaledb/pull/10588), and the SQL test that exercises the storage parameters (`tsl/test/sql/cagg_granular_refresh_api.sql`). No reference page exists yet.
 - SQL definitions in the upstream repository: `sql/ddl_api.sql` (generalized `create_hypertable`, `by_range`, `by_hash`, old `add_dimension` unmarked as deprecated in code), `sql/policy_api.sql` (`add_retention_policy` with `drop_created_before`, `add_reorder_policy`, `add_compaction_policy`, `add_columnstore_policy`, cagg policy signatures, `timescaledb_experimental.add_policies`), `sql/sparse_index.sql`, `sql/maintenance_utils.sql` (`convert_to_columnstore`, `convert_to_rowstore`, `_timescaledb_functions.move_to_columnstore`), `tsl/test/sql/cagg_granular_refresh_api.sql`.
 - drizzle-orm repository: `drizzle-kit/src/sqlgenerator.ts` (`PgCreateViewConvertor` emits `CREATE MATERIALIZED VIEW` from the view's typed options only), `drizzle-kit/src/snapshotsDiffer.ts` (an altered definition is DROP + CREATE; `isExisting` views are filtered out), at tag `drizzle-kit@0.31.11` and on `main`; `drizzle-orm/src/pg-core/view.ts` (`PgMaterializedViewWithConfig` has no `timescaledb.*` keys); `drizzle-orm/src/pg-core/dialect.ts` (`PgDialect.migrate` runs all pending migrations in one `session.transaction`). Drizzle docs: [Views](https://orm.drizzle.team/docs/views) (`.existing()`), [v0 to v1 changes](https://orm.drizzle.team/docs/v0-v1-changes).
-- This repository: `packages/drizzle-pg-extras/src/defs.ts` (`ExtrasKind`, `Hypertable`), `src/snapshot.ts` (`HypertableSnapshot`, `Snapshot.version`, `viewIdentity`), `src/timescale-sql.ts` (current positional and compression SQL), `src/diff.ts` (`statementsBetween`, `idempotentStatements`, `hypertableChanges`), `src/generate.ts` (`planExtras`, write-on-change), `src/render-sql.ts`, `src/quote.ts`; `README.md` "TimescaleDB", "Timescale limits", "What it does not do yet", "Compatibility"; `.github/workflows/ci.yml` job `timescale`; `tests/integration/timescale.test.ts`; `tests/unit/timescale.test.ts`.
+- This repository: `packages/drizzle-pg-extras/src/defs.ts` (`ExtrasKind`, `Hypertable`, `hypertable()` overloads and validation), `src/collect.ts` (`collectExtras`, `defineExtras`, `walk`), `src/snapshot.ts` (`snapshotExtras`, `snapshotHypertable`, `parseSnapshot`, `normalizeTrigger`), `src/timescale-sql.ts` (current positional and compression SQL, the PR1 starting point), `src/diff.ts` (`statementsBetween`, `idempotentStatements`, `hypertableChanges`, `undoHypertable`, `alterHypertable`, `emitComments`, `skipCommentNull`), `src/generate.ts` (`planExtras`, write-on-change), `src/journal.ts` (migration write), `src/render-sql.ts`, `src/quote.ts`; `README.md` "TimescaleDB", "Timescale limits", "What it does not do yet", "Compatibility"; `.github/workflows/ci.yml` job `timescale`; `tests/integration/timescale.test.ts`; `tests/unit/timescale.test.ts`.
+- Origin Product Contract: the Product Contract in this file at commit `3ea9d0e` (repo-relative: `docs/plans/2026-11-21-0803-feat-continuous-aggregates-plan.md`). This enrichment adds the implementation sections and preserves R1-R32, F1-F5, AE1-AE10, scope, and assumptions.
+- Plan research, 2.32.1 SQL: `sql/policy_api.sql` defines `add_columnstore_policy` and `remove_columnstore_policy` as procedures (`CALL`), `add_retention_policy`, `add_reorder_policy`, and the cagg policy functions (`SELECT`); `sql/maintenance_utils.sql` defines `convert_to_rowstore` as a procedure, so the disable path is a `CALL` loop, not `PERFORM`; `sql/ddl_api.sql` defines `by_range`, `by_hash`, the generalized `create_hypertable`, `set_chunk_time_interval`, and `set_number_partitions`.
