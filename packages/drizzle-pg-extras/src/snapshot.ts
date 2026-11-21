@@ -25,6 +25,7 @@ import { type Casing, ColumnCasing, columnTable, unwrapArrayColumn } from './com
 import {
   type AnyPgEnum,
   assertColumnOfTable,
+  type ContinuousAggregate,
   extrasKind,
   type Hypertable,
   type PartitionBound,
@@ -227,6 +228,23 @@ export type HypertableSnapshot = {
   columnstorePolicy: HypertableColumnstorePolicySnapshot | null
 }
 
+export type ContinuousAggregateSourceSnapshot = {
+  kind: 'hypertable' | 'continuousAggregate'
+  schema: string
+  name: string
+}
+
+export type ContinuousAggregateSnapshot = {
+  id: string
+  schema: string
+  name: string
+  query: string
+  source: ContinuousAggregateSourceSnapshot | null
+  realTime: boolean
+  chunkInterval: string | null
+  createGroupIndexes: boolean
+}
+
 export type Snapshot = {
   version: 1
   functions: FunctionSnapshot[]
@@ -237,6 +255,7 @@ export type Snapshot = {
   partitions: PartitionSnapshot[]
   detaches: DetachSnapshot[]
   hypertables: HypertableSnapshot[]
+  continuousAggregates: ContinuousAggregateSnapshot[]
   inventory: {
     scanned: boolean
     tables: InventoryTable[]
@@ -258,6 +277,7 @@ export function emptySnapshot(): Snapshot {
     partitions: [],
     detaches: [],
     hypertables: [],
+    continuousAggregates: [],
     inventory: { scanned: false, tables: [], enums: [], views: [], indexes: [], constraints: [] },
   }
 }
@@ -381,6 +401,7 @@ export function snapshotExtras(extras: PgExtras, options?: { casing?: Casing }):
   const partitions = snapshotPartitions(extras, partitionedTables)
   const detaches = snapshotDetaches(extras, partitions)
   const hypertables = snapshotHypertables(extras, nameOf, partitionedTables, extensions)
+  const continuousAggregates = snapshotContinuousAggregates(extras, casing)
 
   functions.sort((a, b) => a.id.localeCompare(b.id))
   triggers.sort((a, b) => a.id.localeCompare(b.id))
@@ -390,6 +411,7 @@ export function snapshotExtras(extras: PgExtras, options?: { casing?: Casing }):
   partitions.sort((a, b) => a.id.localeCompare(b.id))
   detaches.sort((a, b) => a.id.localeCompare(b.id))
   hypertables.sort((a, b) => a.id.localeCompare(b.id))
+  continuousAggregates.sort((a, b) => a.id.localeCompare(b.id))
 
   const triggerIds = new Set<string>()
   for (const trigger of triggers) {
@@ -411,6 +433,7 @@ export function snapshotExtras(extras: PgExtras, options?: { casing?: Casing }):
     partitions,
     detaches,
     hypertables,
+    continuousAggregates,
     inventory: {
       scanned: true,
       tables: inventoryTables,
@@ -764,6 +787,9 @@ export function parseSnapshot(value: unknown): Snapshot {
     hypertables: Array.isArray(record.hypertables)
       ? record.hypertables.map((hypertable) => normalizeHypertableSnapshot(hypertable))
       : [],
+    continuousAggregates: Array.isArray(record.continuousAggregates)
+      ? record.continuousAggregates.map((aggregate) => normalizeContinuousAggregateSnapshot(aggregate))
+      : [],
     inventory: normalizeInventory(record.inventory),
   }
 }
@@ -838,6 +864,34 @@ function normalizeColumnstorePolicySnapshot(value: unknown): HypertableColumnsto
 
 function nullableString(value: unknown): string | null {
   return typeof value === 'string' ? value : null
+}
+
+function normalizeContinuousAggregateSnapshot(value: unknown): ContinuousAggregateSnapshot {
+  if (!value || typeof value !== 'object') {
+    throw new PgExtrasError('pg extras snapshot continuous aggregate is not an object')
+  }
+  const raw = value as Record<string, unknown>
+  const schema = typeof raw.schema === 'string' ? raw.schema : 'public'
+  const name = typeof raw.name === 'string' ? raw.name : ''
+  if (name.length === 0) throw new PgExtrasError('pg extras snapshot continuous aggregate is missing a name')
+  const source = raw.source
+  const sourceRecord = source && typeof source === 'object' ? source as Record<string, unknown> : null
+  const sourceSchema = nullableString(sourceRecord?.schema) ?? 'public'
+  const sourceName = nullableString(sourceRecord?.name) ?? ''
+  return {
+    id: typeof raw.id === 'string' ? raw.id : JSON.stringify(['continuousAggregate', schema, name]),
+    schema,
+    name,
+    query: typeof raw.query === 'string' ? raw.query : '',
+    source: sourceRecord?.kind === 'hypertable'
+      ? { kind: 'hypertable', schema: sourceSchema, name: sourceName }
+      : sourceRecord?.kind === 'continuousAggregate'
+      ? { kind: 'continuousAggregate', schema: sourceSchema, name: sourceName }
+      : null,
+    realTime: raw.realTime !== false,
+    chunkInterval: nullableString(raw.chunkInterval),
+    createGroupIndexes: raw.createGroupIndexes !== false,
+  }
 }
 
 const COMMENT_KINDS = new Set<CommentKind>([
@@ -1302,6 +1356,53 @@ function snapshotHypertable(hypertable: Hypertable, nameOf: (column: AnyPgColumn
     retention: hypertable.retention ? { ...hypertable.retention } : null,
     columnstorePolicy: hypertable.columnstorePolicy ? { ...hypertable.columnstorePolicy } : null,
   }
+}
+
+function snapshotContinuousAggregates(
+  extras: PgExtras,
+  casing: Casing | undefined,
+): ContinuousAggregateSnapshot[] {
+  const aggregates: ContinuousAggregateSnapshot[] = []
+  for (const aggregate of extras.continuousAggregates) {
+    const snap: ContinuousAggregateSnapshot = {
+      id: JSON.stringify(['continuousAggregate', aggregate.schema, aggregate.name]),
+      schema: aggregate.schema,
+      name: aggregate.name,
+      query: typeof aggregate.query === 'string' ? aggregate.query : renderSql(aggregate.query, casing),
+      source: aggregate.source ? sourceIdentity(aggregate.source) : null,
+      realTime: aggregate.realTime,
+      chunkInterval: aggregate.chunkInterval,
+      createGroupIndexes: aggregate.createGroupIndexes,
+    }
+    if (aggregates.some((item) => item.id === snap.id)) {
+      throw new PgExtrasError(
+        `continuous aggregate ${snap.schema}.${snap.name} is declared more than once`,
+      )
+    }
+    aggregates.push(snap)
+  }
+  if (aggregates.length > 0 && !extras.extensions.some((ext) => ext.name === 'timescaledb')) {
+    throw new PgExtrasError(
+      `continuousAggregate() requires pgExtension("timescaledb") in the schema (${
+        aggregates.map((item) => `${item.schema}.${item.name}`).join(', ')
+      }). Declare the extension and export it.`,
+    )
+  }
+  return aggregates
+}
+
+function sourceIdentity(source: ContinuousAggregate['source']): ContinuousAggregateSourceSnapshot | null {
+  if (!source) return null
+  if (extrasKind(source) === 'hypertable') {
+    const hypertable = source as Hypertable
+    const identity = tableIdentity(hypertable.table)
+    return { kind: 'hypertable', schema: identity.schema, name: identity.name }
+  }
+  if (extrasKind(source) === 'continuousAggregate') {
+    const aggregate = source as ContinuousAggregate
+    return { kind: 'continuousAggregate', schema: aggregate.schema, name: aggregate.name }
+  }
+  throw new PgExtrasError('continuousAggregate() source is not a hypertable or continuous aggregate')
 }
 
 function snapshotPartitionedTables(

@@ -179,7 +179,134 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       await client.end()
     }
   })
+
+  it('migrates a hierarchical continuous aggregate stack and rebuilds a leaf', async () => {
+    mkdirSync(root, { recursive: true })
+    const dir = mkdtempSync(path.join(root, 'cagg-'))
+    writeFileSync(path.join(dir, 'schema.ts'), aggregateSchemaSource(source))
+    writeFileSync(path.join(dir, 'drizzle.config.ts'), configSource())
+
+    const client = new pg.Client({ connectionString: url })
+    await client.connect()
+    const cwd = process.cwd()
+    try {
+      await client.query('DROP MATERIALIZED VIEW IF EXISTS public.metrics_daily CASCADE')
+      await client.query('DROP MATERIALIZED VIEW IF EXISTS public.metrics_hourly CASCADE')
+      await client.query('DROP TABLE IF EXISTS public.metrics CASCADE')
+
+      const table = kitExec(dir, ['generate', '--name', 'metrics', '--config', 'drizzle.config.ts'])
+      expect(table.status, table.stderr + table.stdout).toBe(0)
+
+      process.chdir(dir)
+      expect(await run(['generate', '--name', 'aggregates'])).toBe(0)
+      process.chdir(cwd)
+
+      const migrate = kitExec(dir, ['migrate', '--config', 'drizzle.config.ts'])
+      expect(migrate.status, migrate.stderr + migrate.stdout).toBe(0)
+
+      const upSql = readFileSync(migrationFile(path.join(dir, 'drizzle'), 'aggregates'), 'utf8')
+      expect(upSql).toContain('CREATE MATERIALIZED VIEW IF NOT EXISTS "public"."metrics_hourly"')
+      expect(upSql).toContain('CREATE MATERIALIZED VIEW IF NOT EXISTS "public"."metrics_daily"')
+      expect(upSql).toContain('WITH NO DATA')
+      expect(upSql.indexOf('"public"."metrics_hourly"')).toBeLessThan(upSql.indexOf('"public"."metrics_daily"'))
+      await runStatements(client, upSql)
+
+      const views = await client.query<{ view_name: string; materialized_only: boolean }>(
+        `SELECT view_name, materialized_only FROM timescaledb_information.continuous_aggregates
+         WHERE view_schema = 'public' ORDER BY view_name`,
+      )
+      expect(views.rows.map((row) => row.view_name)).toEqual(['metrics_daily', 'metrics_hourly'])
+      expect(views.rows.every((row) => row.materialized_only === false)).toBe(true)
+      const comment = await client.query<{ comment: string | null }>(
+        `SELECT obj_description('public.metrics_hourly'::regclass, 'pg_class') AS comment`,
+      )
+      expect(comment.rows[0]?.comment).toBe('Hourly metrics')
+
+      await client.query(`INSERT INTO metrics (time, device_id, value) VALUES (now(), 'a', 1), (now(), 'a', 3)`)
+      await client.query(`CALL refresh_continuous_aggregate('public.metrics_hourly', NULL, NULL)`)
+      await client.query(`CALL refresh_continuous_aggregate('public.metrics_daily', NULL, NULL)`)
+      const refreshed = await client.query<{ value: number }>(`SELECT value FROM metrics_hourly`)
+      expect(Number(refreshed.rows[0]?.value)).toBe(2)
+
+      const before = sqlFiles(path.join(dir, 'drizzle'))
+      process.chdir(dir)
+      expect(await run(['generate', '--name', 'noop'])).toBe(0)
+      expect(await run(['check'])).toBe(0)
+      process.chdir(cwd)
+      expect(sqlFiles(path.join(dir, 'drizzle'))).toEqual(before)
+
+      writeFileSync(path.join(dir, 'schema.ts'), aggregateSchemaSource(source, 'max'))
+      process.chdir(dir)
+      expect(await run(['generate', '--name', 'leaf_rebuild'])).toBe(0)
+      process.chdir(cwd)
+      const follow = kitExec(dir, ['migrate', '--config', 'drizzle.config.ts'])
+      expect(follow.status, follow.stderr + follow.stdout).toBe(0)
+      const rebuildSql = readFileSync(migrationFile(path.join(dir, 'drizzle'), 'leaf_rebuild'), 'utf8')
+      expect(rebuildSql).toContain('DROP MATERIALIZED VIEW IF EXISTS "public"."metrics_daily"')
+      expect(rebuildSql).toContain('CREATE MATERIALIZED VIEW IF NOT EXISTS "public"."metrics_daily"')
+      expect(rebuildSql).not.toContain('DROP MATERIALIZED VIEW IF EXISTS "public"."metrics_hourly"')
+      await runStatements(client, rebuildSql)
+
+      await runStatements(
+        client,
+        readFileSync(migrationFile(path.join(dir, 'drizzle'), 'leaf_rebuild', 'down'), 'utf8'),
+      )
+
+      writeFileSync(path.join(dir, 'schema.ts'), aggregateSchemaSource(source, 'avg', 'max'))
+      process.chdir(dir)
+      expect(await run(['generate', '--name', 'parent_change'])).toBe(1)
+      process.chdir(cwd)
+      expect(sqlFiles(path.join(dir, 'drizzle'))).not.toContain('parent_change')
+    } finally {
+      process.chdir(cwd)
+      await client.end()
+    }
+  })
 })
+
+function aggregateSchemaSource(sourcePath: string, leafAggregate = 'avg', parentAggregate = 'avg'): string {
+  return `import { integer, pgMaterializedView, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
+import { continuousAggregate, hypertable, pgExtension, withComment } from ${JSON.stringify(sourcePath)};
+
+export const timescale = pgExtension("timescaledb");
+
+export const metrics = pgTable("metrics", {
+  time: timestamp("time", { withTimezone: true }).notNull(),
+  deviceId: text("device_id").notNull(),
+  value: integer("value").notNull(),
+}, (t) => [
+  primaryKey({ columns: [t.time, t.deviceId] }),
+]);
+
+export const metricsHypertable = hypertable(metrics, {
+  timeColumn: metrics.time,
+  chunkTimeInterval: "1 day",
+});
+
+const hourlyView = withComment(pgMaterializedView("metrics_hourly", {
+  bucket: timestamp("bucket", { withTimezone: true }),
+  deviceId: text("device_id"),
+  value: integer("value"),
+}).existing(), "Hourly metrics");
+
+export const metricsHourly = continuousAggregate(hourlyView, {
+  query: \`SELECT time_bucket('1 hour', time) AS bucket, device_id, ${parentAggregate}(value) AS value FROM metrics GROUP BY bucket, device_id\`,
+  source: metricsHypertable,
+  chunkInterval: "1 hour",
+});
+
+const dailyView = pgMaterializedView("metrics_daily", {
+  bucket: timestamp("bucket", { withTimezone: true }),
+  deviceId: text("device_id"),
+  value: integer("value"),
+}).existing();
+
+export const metricsDaily = continuousAggregate(dailyView, {
+  query: \`SELECT time_bucket('1 day', bucket) AS bucket, device_id, ${leafAggregate}(value) AS value FROM metrics_hourly GROUP BY bucket, device_id\`,
+  source: metricsHourly,
+});
+`
+}
 
 function hypertableSql(migrateData: boolean): string {
   const occupied = pgTable('occupied', {
