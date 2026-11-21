@@ -28,12 +28,12 @@ function metricsHypertable(table = metricsTable(), migrateData = false) {
     partitioningColumn: table.deviceId,
     numberPartitions: 4,
     migrateData,
-    compression: {
+    columnstore: {
       segmentBy: [table.deviceId],
       orderBy: [{ column: table.time, direction: 'desc', nulls: 'last' }],
     },
     retention: { dropAfter: '6 months', scheduleInterval: '1 day' },
-    compressionPolicy: { compressAfter: '7 days' },
+    columnstorePolicy: { after: '7 days' },
   })
 }
 
@@ -46,29 +46,33 @@ function fullExtras(table = metricsTable(), migrateData = false) {
 }
 
 describe('hypertable sql', () => {
-  it('emits create_hypertable, compression, and policies after the extension', () => {
+  it('emits by_range create_hypertable, the space dimension, columnstore, and policies after the extension', () => {
     const diff = diffSnapshots(emptySnapshot(), snapshotExtras(fullExtras()))
     const up = diff.up.join('\n')
     expect(up.indexOf('CREATE EXTENSION IF NOT EXISTS "timescaledb"')).toBeLessThan(up.indexOf('create_hypertable'))
     expect(up).toContain(
-      `SELECT create_hypertable('"public"."metrics"'::regclass, 'time'::name, partitioning_column => 'device_id'::name, number_partitions => 4, chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);`,
+      `SELECT create_hypertable('"public"."metrics"'::regclass, by_range('time'::name), chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);`,
     )
-    expect(up).toContain(`timescaledb.compress_segmentby = '"device_id"'`)
-    expect(up).toContain(`timescaledb.compress_orderby = '"time" DESC NULLS LAST'`)
     expect(up).toContain(
-      `SELECT add_compression_policy('"public"."metrics"'::regclass, compress_after => INTERVAL '7 days', if_not_exists => TRUE);`,
+      `SELECT add_dimension('"public"."metrics"'::regclass, by_hash('device_id'::name, 4), if_not_exists => TRUE);`,
+    )
+    expect(up).toContain('timescaledb.enable_columnstore')
+    expect(up).toContain(`timescaledb.segmentby = '"device_id"'`)
+    expect(up).toContain(`timescaledb.orderby = '"time" DESC NULLS LAST'`)
+    expect(up).toContain(
+      `CALL add_columnstore_policy('"public"."metrics"'::regclass, after => INTERVAL '7 days', if_not_exists => TRUE);`,
     )
     expect(up).toContain(
       `SELECT add_retention_policy('"public"."metrics"'::regclass, drop_after => INTERVAL '6 months', schedule_interval => INTERVAL '1 day', if_not_exists => TRUE);`,
     )
-    expect(up.indexOf('timescaledb.compress')).toBeLessThan(up.indexOf('add_compression_policy'))
+    expect(up.indexOf('create_hypertable')).toBeLessThan(up.indexOf('add_dimension'))
+    expect(up.indexOf('add_dimension')).toBeLessThan(up.indexOf('timescaledb.enable_columnstore'))
+    expect(up.indexOf('timescaledb.enable_columnstore')).toBeLessThan(up.indexOf('add_columnstore_policy'))
     const down = diff.down.join('\n')
-    expect(down.indexOf('remove_compression_policy')).toBeLessThan(down.indexOf('timescaledb.compress = false'))
-    expect(down).toContain('decompress_chunk')
-    expect(down).toContain('remove_compression_policy')
-    expect(down.indexOf('remove_compression_policy')).toBeLessThan(down.indexOf('LOCK TABLE'))
-    expect(down.indexOf('LOCK TABLE')).toBeLessThan(down.indexOf('decompress_chunk'))
-    expect(down.indexOf('decompress_chunk')).toBeLessThan(down.indexOf('timescaledb.compress = false'))
+    expect(down.indexOf('remove_columnstore_policy')).toBeLessThan(down.indexOf('convert_to_rowstore'))
+    expect(down.indexOf('remove_columnstore_policy')).toBeLessThan(down.indexOf('remove_retention_policy'))
+    expect(down).toContain('convert_to_rowstore')
+    expect(down).toContain('timescaledb.enable_columnstore = false')
     expect(down).toContain('remove_retention_policy')
     expect(down).toContain('stays a hypertable')
     expect(down).not.toContain('DROP EXTENSION')
@@ -81,13 +85,22 @@ describe('hypertable sql', () => {
     expect(script).toContain('if_not_exists => TRUE')
     expect(script).not.toContain('migrate_data')
     expect(script).not.toContain('remove_retention_policy')
-    const withMigrate = snapshotExtras(fullExtras(metricsTable(), true))
-    expect(withMigrate.hypertables[0]?.migrateData).toBe(true)
-    expect(diffSnapshots(snapshotExtras(fullExtras()), withMigrate).up).toEqual([])
-    expect(renderIdempotent(fullExtras(metricsTable(), true))).toContain('migrate_data => TRUE')
+    expect(script).toContain('by_range')
+    const table = metricsTable()
+    const plain = defineExtras({
+      extensions: [pgExtension('timescaledb')],
+      hypertables: [hypertable(table, { timeColumn: table.time, chunkTimeInterval: '1 day' })],
+    })
+    const withMigrate = defineExtras({
+      extensions: [pgExtension('timescaledb')],
+      hypertables: [hypertable(table, { timeColumn: table.time, chunkTimeInterval: '1 day', migrateData: true })],
+    })
+    expect(snapshotExtras(withMigrate).hypertables[0]?.migrateData).toBe(true)
+    expect(diffSnapshots(snapshotExtras(plain), snapshotExtras(withMigrate)).up).toEqual([])
+    expect(renderIdempotent(withMigrate)).toContain('migrate_data => TRUE')
   })
 
-  it('normalizes intervals and updates chunk time, space, compression, and policies in place', () => {
+  it('normalizes intervals and updates chunk time, space, columnstore, and policies in place', () => {
     const metrics = metricsTable()
     const before = snapshotExtras(defineExtras({
       extensions: [pgExtension('TimescaleDB')],
@@ -115,18 +128,18 @@ describe('hypertable sql', () => {
     }))
     const spaceSql = diffSnapshots(before, spaced).up.join('\n')
     expect(spaceSql).toContain(
-      `SELECT add_dimension('"public"."metrics"'::regclass, 'device_id'::name, number_partitions => 4, if_not_exists => TRUE);`,
+      `SELECT add_dimension('"public"."metrics"'::regclass, by_hash('device_id'::name, 4), if_not_exists => TRUE);`,
     )
     expect(spaceSql).not.toContain('create_hypertable')
 
-    const compressed = snapshotExtras(defineExtras({
+    const stored = snapshotExtras(defineExtras({
       extensions: [pgExtension('timescaledb')],
       hypertables: [hypertable(metrics, {
         timeColumn: metrics.time,
         chunkTimeInterval: '1 day',
-        compression: { segmentBy: [metrics.deviceId] },
+        columnstore: { segmentBy: [metrics.deviceId] },
         retention: { dropAfter: '6 months' },
-        compressionPolicy: { compressAfter: '7 days' },
+        columnstorePolicy: { after: '7 days' },
       })],
     }))
     const cleared = snapshotExtras(defineExtras({
@@ -134,15 +147,15 @@ describe('hypertable sql', () => {
       hypertables: [hypertable(metrics, {
         timeColumn: metrics.time,
         chunkTimeInterval: '1 day',
-        compression: {},
+        columnstore: {},
         retention: { dropAfter: '3 months' },
       })],
     }))
-    const changed = diffSnapshots(compressed, cleared).up.join('\n')
-    expect(changed.indexOf('remove_compression_policy')).toBeLessThan(
-      changed.indexOf("timescaledb.compress_segmentby = ''"),
+    const changed = diffSnapshots(stored, cleared).up.join('\n')
+    expect(changed.indexOf('remove_columnstore_policy')).toBeLessThan(
+      changed.indexOf("timescaledb.segmentby = ''"),
     )
-    expect(changed).not.toContain('add_compression_policy')
+    expect(changed).not.toContain('add_columnstore_policy')
     expect(changed.indexOf('remove_retention_policy')).toBeLessThan(
       changed.indexOf("drop_after => INTERVAL '3 months'"),
     )
@@ -151,9 +164,9 @@ describe('hypertable sql', () => {
       extensions: [pgExtension('timescaledb')],
       hypertables: [hypertable(metrics, { timeColumn: metrics.time, chunkTimeInterval: '1 day' })],
     }))
-    const off = diffSnapshots(compressed, dropped).up.join('\n')
-    expect(off.indexOf('remove_compression_policy')).toBeLessThan(off.indexOf('decompress_chunk'))
-    expect(off.indexOf('decompress_chunk')).toBeLessThan(off.indexOf('timescaledb.compress = false'))
+    const off = diffSnapshots(stored, dropped).up.join('\n')
+    expect(off.indexOf('remove_columnstore_policy')).toBeLessThan(off.indexOf('convert_to_rowstore'))
+    expect(off.indexOf('convert_to_rowstore')).toBeLessThan(off.indexOf('timescaledb.enable_columnstore = false'))
   })
 
   it('applies snake_case and qualifies a non-public schema', () => {
@@ -171,8 +184,42 @@ describe('hypertable sql', () => {
     )
     expect(snap.hypertables[0]).toMatchObject({ schema: 'market', name: 'readings', timeColumn: 'created_at' })
     expect(diffSnapshots(emptySnapshot(), snap).up.join('\n')).toContain(
-      `SELECT create_hypertable('"market"."readings"'::regclass, 'created_at'::name, chunk_time_interval => INTERVAL '1 hour', if_not_exists => TRUE);`,
+      `SELECT create_hypertable('"market"."readings"'::regclass, by_range('created_at'::name), chunk_time_interval => INTERVAL '1 hour', if_not_exists => TRUE);`,
     )
+  })
+
+  it('reads an old compression snapshot as the columnstore shape', () => {
+    const old = parseSnapshot({
+      version: 1,
+      functions: [],
+      triggers: [],
+      extensions: [{ id: 'timescaledb', name: 'timescaledb', version: null }],
+      comments: [],
+      hypertables: [{
+        id: JSON.stringify(['hypertable', 'public', 'metrics']),
+        schema: 'public',
+        name: 'metrics',
+        timeColumn: 'time',
+        chunkTimeInterval: '1 day',
+        partitioningColumn: 'device_id',
+        numberPartitions: 4,
+        migrateData: false,
+        compression: {
+          segmentBy: ['device_id'],
+          orderBy: [{ column: 'time', direction: 'desc', nulls: 'last' }],
+        },
+        retention: { dropAfter: '6 months', scheduleInterval: '1 day' },
+        compressionPolicy: { compressAfter: '7 days', scheduleInterval: null },
+      }],
+    })
+    expect(old.hypertables[0]).toMatchObject({
+      columnstore: {
+        segmentBy: ['device_id'],
+        orderBy: [{ column: 'time', direction: 'desc', nulls: 'last' }],
+      },
+      columnstorePolicy: { after: '7 days', createdBefore: null },
+    })
+    expect(diffSnapshots(old, snapshotExtras(fullExtras())).up).toEqual([])
   })
 
   it('accepts a { name, schema } table and reads a snapshot that has no hypertable key', () => {
@@ -271,15 +318,90 @@ describe('hypertable definition checks', () => {
     expect(() =>
       hypertable(metrics, {
         timeColumn: metrics.time,
-        compressionPolicy: { compressAfter: '7 days' },
+        columnstorePolicy: { after: '7 days' },
       })
-    ).toThrow(/compressionPolicy requires compression/)
+    ).toThrow(/columnstorePolicy requires columnstore/)
     expect(() =>
       hypertable(metrics, {
         timeColumn: metrics.time,
-        compression: { orderBy: [{ column: metrics.time, direction: 'sideways' as 'asc' }] },
+        columnstore: { orderBy: [{ column: metrics.time, direction: 'sideways' as 'asc' }] },
       })
     ).toThrow(/direction/)
+    expect(() =>
+      hypertable(metrics, {
+        timeColumn: metrics.time,
+        partitioningColumn: metrics.deviceId,
+        numberPartitions: 2,
+        migrateData: true,
+      })
+    ).toThrow(/migrateData cannot be combined/)
+  })
+
+  it('creates by_range with optional default indexes', () => {
+    const noIndexes = snapshotExtras(defineExtras({
+      extensions: [pgExtension('timescaledb')],
+      hypertables: [hypertable(metrics, {
+        timeColumn: metrics.time,
+        createDefaultIndexes: false,
+      })],
+    }))
+    expect(noIndexes.hypertables[0]?.createDefaultIndexes).toBe(false)
+    expect(diffSnapshots(emptySnapshot(), noIndexes).up.join('\n')).toContain(
+      `by_range('time'::name), create_default_indexes => FALSE, if_not_exists => TRUE`,
+    )
+    const withIndexes = snapshotExtras(defineExtras({
+      extensions: [pgExtension('timescaledb')],
+      hypertables: [hypertable(metrics, { timeColumn: metrics.time })],
+    }))
+    expect(diffSnapshots(noIndexes, withIndexes).up).toEqual([])
+  })
+
+  it('supports created_before variants and policy scheduling arguments', () => {
+    const snap = snapshotExtras(defineExtras({
+      extensions: [pgExtension('timescaledb')],
+      hypertables: [hypertable(metrics, {
+        timeColumn: metrics.time,
+        columnstore: {},
+        columnstorePolicy: {
+          createdBefore: '2024-01-01T00:00:00Z',
+          scheduleInterval: '1 hour',
+          initialStart: '2024-02-01T00:00:00Z',
+          timezone: 'UTC',
+        },
+        retention: { dropCreatedBefore: '2023-01-01T00:00:00Z' },
+      })],
+    }))
+    const up = diffSnapshots(emptySnapshot(), snap).up.join('\n')
+    expect(up).toContain(
+      `CALL add_columnstore_policy('"public"."metrics"'::regclass, created_before => '2024-01-01T00:00:00Z'::timestamptz, schedule_interval => INTERVAL '1 hour', initial_start => '2024-02-01T00:00:00Z'::timestamptz, timezone => 'UTC', if_not_exists => TRUE);`,
+    )
+    expect(up).toContain(
+      `SELECT add_retention_policy('"public"."metrics"'::regclass, drop_created_before => '2023-01-01T00:00:00Z'::timestamptz, if_not_exists => TRUE);`,
+    )
+  })
+
+  it('rejects retention and columnstore policies without exactly one boundary', () => {
+    expect(() => hypertable(metrics, { timeColumn: metrics.time, retention: {} })).toThrow(/exactly one/)
+    expect(() =>
+      hypertable(metrics, {
+        timeColumn: metrics.time,
+        retention: { dropAfter: '1 day', dropCreatedBefore: '2024-01-01' },
+      })
+    ).toThrow(/exactly one/)
+    expect(() =>
+      hypertable(metrics, {
+        timeColumn: metrics.time,
+        columnstore: {},
+        columnstorePolicy: {},
+      })
+    ).toThrow(/exactly one/)
+    expect(() =>
+      hypertable(metrics, {
+        timeColumn: metrics.time,
+        columnstore: {},
+        columnstorePolicy: { after: '1 day', createdBefore: '2024-01-01' },
+      })
+    ).toThrow(/exactly one/)
   })
 
   it('refuses to drop a hypertable, clear its interval, or change the time or space key', () => {
@@ -296,12 +418,12 @@ describe('hypertable definition checks', () => {
         timeColumn: metrics.time,
         partitioningColumn: metrics.deviceId,
         numberPartitions: 4,
-        compression: {
+        columnstore: {
           segmentBy: [metrics.deviceId],
           orderBy: [{ column: metrics.time, direction: 'desc', nulls: 'last' }],
         },
         retention: { dropAfter: '6 months', scheduleInterval: '1 day' },
-        compressionPolicy: { compressAfter: '7 days' },
+        columnstorePolicy: { after: '7 days' },
       })],
     }))
     expect(() => diffSnapshots(before, cleared)).toThrow(/clearing chunkTimeInterval/)
@@ -329,12 +451,12 @@ describe('hypertable definition checks', () => {
         chunkTimeInterval: '1 day',
         partitioningColumn: other.deviceId,
         numberPartitions: 4,
-        compression: {
+        columnstore: {
           segmentBy: [other.deviceId],
           orderBy: [{ column: other.createdAt, direction: 'desc', nulls: 'last' }],
         },
         retention: { dropAfter: '6 months', scheduleInterval: '1 day' },
-        compressionPolicy: { compressAfter: '7 days' },
+        columnstorePolicy: { after: '7 days' },
       })],
     }))
     expect(() => diffSnapshots(before, moved)).toThrow(/time column changed/)
