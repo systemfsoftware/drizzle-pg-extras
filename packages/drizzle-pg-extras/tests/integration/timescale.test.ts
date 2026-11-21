@@ -442,11 +442,8 @@ async function chunkCount(client: pg.Client, schema: string, table: string): Pro
 
 async function columnstoreChunkCount(client: pg.Client, schema: string, table: string): Promise<number> {
   const result = await client.query<{ chunks: string }>(
-    `SELECT count(*)::text AS chunks
-     FROM timescaledb_information.chunks c
-     JOIN timescaledb_information.chunk_columnstore_settings s
-       ON s.chunk_schema = c.chunk_schema AND s.chunk_name = c.chunk_name
-     WHERE c.hypertable_schema = $1 AND c.hypertable_name = $2`,
+    `SELECT count(*)::text AS chunks FROM timescaledb_information.chunk_columnstore_settings
+     WHERE hypertable = format('%I.%I', $1::text, $2::text)::regclass`,
     [schema, table],
   )
   return Number(result.rows[0]?.chunks)
