@@ -75,6 +75,7 @@ export {
 } from './partition-sql.js'
 export {
   type CommentSnapshot,
+  type ContinuousAggregateRefreshPolicySnapshot,
   type ContinuousAggregateSnapshot,
   type ContinuousAggregateSourceSnapshot,
   type DetachSnapshot,
