@@ -75,4 +75,4 @@ Development setup, tests and releases: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-[MIT](packages/drizzle-pg-extras/LICENSE)
+[Apache-2.0](packages/drizzle-pg-extras/LICENSE)
