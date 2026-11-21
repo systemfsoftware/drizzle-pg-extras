@@ -9,7 +9,7 @@
   inputs = {
     core.url = "github:systemfsoftware/systemfsoftware/15b4d2ab1e2af0a154fad2b9af7bd1f6449b3606";
     nixpkgs.follows = "core/nixpkgs";
-    pnpm-release-management.url = "github:systemfsoftware/pnpm-release-management";
+    pnpm-release-management.url = "github:systemfsoftware/pnpm-release-management/1caca2828ed543409ae9ce0dceb949845a617564";
   };
 
   outputs = { self, nixpkgs, pnpm-release-management, ... }:
@@ -28,6 +28,15 @@
     in
     {
       packages = forEachSystem workspaceOf;
+
+      checks = forEachSystem (pkgs: {
+        consumer-store = pnpm-release-management.lib.mkPnpmConsumerStore {
+          inherit pkgs;
+          src = self;
+          pname = "drizzle-pg-extras";
+          pnpm = pkgs.pnpm_12;
+        };
+      });
 
       devShells = forEachSystem (pkgs: {
         default = pkgs.mkShell {
