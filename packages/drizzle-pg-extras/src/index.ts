@@ -2,6 +2,10 @@ export { collectExtras, defineExtras } from './collect.js'
 export {
   type AnyPgEnum,
   commentOn,
+  type ContinuousAggregate,
+  continuousAggregate,
+  type ContinuousAggregateConfig,
+  type ContinuousAggregateSource,
   type FunctionCall,
   type Hypertable,
   hypertable,
@@ -69,6 +73,8 @@ export {
 } from './partition-sql.js'
 export {
   type CommentSnapshot,
+  type ContinuousAggregateSnapshot,
+  type ContinuousAggregateSourceSnapshot,
   type DetachSnapshot,
   emptySnapshot,
   type ExtensionSnapshot,
@@ -99,9 +105,13 @@ export {
   addColumnstorePolicySql,
   addHypertableDimensionSql,
   addRetentionPolicySql,
+  alterContinuousAggregateChunkIntervalSql,
+  alterContinuousAggregateRealTimeSql,
+  createContinuousAggregateSql,
   createHypertableSql,
   createHypertableStatements,
   disableHypertableColumnstoreSql,
+  dropContinuousAggregateSql,
   enableHypertableColumnstoreSql,
   leaveChunkIntervalSql,
   leaveHypertableDimensionSql,

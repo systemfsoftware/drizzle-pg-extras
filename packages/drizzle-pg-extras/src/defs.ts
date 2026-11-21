@@ -1,4 +1,4 @@
-import { Column, ColumnBuilder, type ColumnBuilderBase, getTableColumns, is, type SQL, sql, Table } from 'drizzle-orm'
+import { Column, ColumnBuilder, type ColumnBuilderBase, getTableColumns, is, SQL, sql, Table } from 'drizzle-orm'
 import {
   type AnyPgColumn,
   CheckBuilder,
@@ -42,6 +42,7 @@ export type ExtrasKind =
   | 'partition'
   | 'detach'
   | 'hypertable'
+  | 'continuousAggregate'
 
 export type PgLanguage = 'plpgsql' | 'sql'
 export type PgVolatility = 'volatile' | 'stable' | 'immutable'
@@ -269,6 +270,28 @@ export type Hypertable = {
   readonly columnstorePolicy: HypertableColumnstorePolicy | null
 }
 
+export type ContinuousAggregateSource = Hypertable | ContinuousAggregate
+
+export type ContinuousAggregate = {
+  readonly [KIND]: 'continuousAggregate'
+  readonly view: PgMaterializedView | null
+  readonly name: string
+  readonly schema: string
+  readonly query: string | SQL
+  readonly source: ContinuousAggregateSource | null
+  readonly realTime: boolean
+  readonly chunkInterval: string | null
+  readonly createGroupIndexes: boolean
+}
+
+export type ContinuousAggregateConfig = {
+  query: string | SQL
+  source?: ContinuousAggregateSource
+  realTime?: boolean
+  chunkInterval?: string
+  createGroupIndexes?: boolean
+}
+
 export type PgExtras = {
   functions: PgFunction[]
   triggers: PgTrigger[]
@@ -281,6 +304,7 @@ export type PgExtras = {
   partitions: PgPartition[]
   detaches: PgDetach[]
   hypertables: Hypertable[]
+  continuousAggregates: ContinuousAggregate[]
 }
 
 function brand<T extends object, K extends ExtrasKind>(value: T, kind: K): T & { readonly [KIND]: K } {
@@ -299,7 +323,8 @@ export function extrasKind(value: unknown): ExtrasKind | null {
     kind === 'partitionedTable' ||
     kind === 'partition' ||
     kind === 'detach' ||
-    kind === 'hypertable'
+    kind === 'hypertable' ||
+    kind === 'continuousAggregate'
   ) {
     return kind
   }
@@ -1528,6 +1553,91 @@ export function hypertable(
     },
     'hypertable',
   )
+}
+
+/**
+ * Declare a TimescaleDB continuous aggregate over a Drizzle materialized view.
+ *
+ * The view must be declared with `materializedView(...).existing()` so drizzle-kit
+ * leaves it alone. The SELECT is the aggregate's definition; `source` records the
+ * declared hypertable or aggregate it reads from for ordering and rebuild safety.
+ */
+export function continuousAggregate(
+  view: PgMaterializedView,
+  config: ContinuousAggregateConfig,
+): ContinuousAggregate
+export function continuousAggregate(
+  name: string | { name: string; schema?: string },
+  config: ContinuousAggregateConfig,
+): ContinuousAggregate
+export function continuousAggregate(
+  viewOrName: PgMaterializedView | string | { name: string; schema?: string },
+  config: ContinuousAggregateConfig,
+): ContinuousAggregate {
+  const view = isPgMaterializedView(viewOrName) ? viewOrName : null
+  const identity = continuousAggregateIdentity(viewOrName)
+  const where = `continuousAggregate(${identity.schema}.${identity.name})`
+  assertIdentifier('continuous aggregate', identity.name)
+  assertIdentifier('continuous aggregate schema', identity.schema)
+  const query = typeof config.query === 'string' ? config.query.trim() : config.query
+  if (typeof query === 'string' && query.length === 0) {
+    throw new PgExtrasError(`${where}: query is empty`)
+  }
+  if (typeof query !== 'string' && !is(query, SQL)) {
+    throw new PgExtrasError(`${where}: query must be a SELECT string or a sql fragment`)
+  }
+  if (config.source !== undefined) {
+    const sourceKind = extrasKind(config.source)
+    if (sourceKind !== 'hypertable' && sourceKind !== 'continuousAggregate') {
+      throw new PgExtrasError(
+        `${where}: source must be a hypertable() or continuousAggregate() declaration`,
+      )
+    }
+  }
+  const seen = new Set<unknown>()
+  let source: ContinuousAggregateSource | null = config.source ?? null
+  while (source) {
+    if (seen.has(source)) throw new PgExtrasError(`${where}: source chain has a cycle`)
+    seen.add(source)
+    source = extrasKind(source) === 'continuousAggregate' ? (source as ContinuousAggregate).source : null
+  }
+  if (config.realTime !== undefined && typeof config.realTime !== 'boolean') {
+    throw new PgExtrasError(`${where}: realTime must be a boolean`)
+  }
+  if (config.createGroupIndexes !== undefined && typeof config.createGroupIndexes !== 'boolean') {
+    throw new PgExtrasError(`${where}: createGroupIndexes must be a boolean`)
+  }
+  return brand(
+    {
+      view,
+      schema: identity.schema,
+      name: identity.name,
+      query,
+      source: config.source ?? null,
+      realTime: config.realTime ?? true,
+      chunkInterval: config.chunkInterval === undefined
+        ? null
+        : normalizeInterval(config.chunkInterval, `${where} chunkInterval`),
+      createGroupIndexes: config.createGroupIndexes ?? true,
+    },
+    'continuousAggregate',
+  )
+}
+
+function continuousAggregateIdentity(
+  viewOrName: PgMaterializedView | string | { name: string; schema?: string },
+): { schema: string; name: string } {
+  if (isPgMaterializedView(viewOrName)) {
+    const materialized = getMaterializedViewConfig(viewOrName)
+    if (!materialized.isExisting) {
+      throw new PgExtrasError(
+        `continuousAggregate("${materialized.name}") requires a materialized view declared with .existing(). drizzle-kit would otherwise rewrite the view and drop timescaledb.continuous.`,
+      )
+    }
+    return { schema: schemaName(materialized.schema), name: materialized.name }
+  }
+  if (typeof viewOrName === 'string') return { schema: 'public', name: viewOrName }
+  return { schema: schemaName(viewOrName.schema), name: viewOrName.name }
 }
 
 function readColumnstore(

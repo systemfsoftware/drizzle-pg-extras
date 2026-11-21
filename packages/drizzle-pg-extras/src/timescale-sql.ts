@@ -1,6 +1,7 @@
 import { PgExtrasError } from './errors.js'
 import { qualify, quoteIdent, quoteLiteral } from './quote.js'
 import type {
+  ContinuousAggregateSnapshot,
   HypertableColumnstorePolicySnapshot,
   HypertableColumnstoreSnapshot,
   HypertableRetentionSnapshot,
@@ -110,6 +111,42 @@ export function removeColumnstorePolicySql(ht: Pick<HypertableSnapshot, 'schema'
   }, if_exists => TRUE);`
 }
 
+export function createContinuousAggregateSql(aggregate: ContinuousAggregateSnapshot): string {
+  const options = ['timescaledb.continuous']
+  if (!aggregate.realTime) options.push('timescaledb.materialized_only = true')
+  if (aggregate.chunkInterval) options.push(`timescaledb.chunk_interval = ${intervalLiteral(aggregate.chunkInterval)}`)
+  if (!aggregate.createGroupIndexes) options.push('timescaledb.create_group_indexes = false')
+  return `-- Create the continuous aggregate ${
+    qualify(aggregate.schema, aggregate.name)
+  }.\nCREATE MATERIALIZED VIEW IF NOT EXISTS ${qualify(aggregate.schema, aggregate.name)}\nWITH (\n  ${
+    options.join(',\n  ')
+  }\n)\nAS\n${stripSemicolon(aggregate.query)}\nWITH NO DATA;`
+}
+
+export function dropContinuousAggregateSql(
+  aggregate: Pick<ContinuousAggregateSnapshot, 'schema' | 'name'>,
+): string {
+  return `-- Drop the continuous aggregate ${
+    qualify(aggregate.schema, aggregate.name)
+  }.\nDROP MATERIALIZED VIEW IF EXISTS ${qualify(aggregate.schema, aggregate.name)};`
+}
+
+export function alterContinuousAggregateRealTimeSql(aggregate: ContinuousAggregateSnapshot): string {
+  return `-- Set real-time aggregation on ${qualify(aggregate.schema, aggregate.name)} to ${
+    aggregate.realTime ? 'on' : 'off'
+  }.\nALTER MATERIALIZED VIEW ${qualify(aggregate.schema, aggregate.name)} SET (timescaledb.materialized_only = ${
+    aggregate.realTime ? 'false' : 'true'
+  });`
+}
+
+export function alterContinuousAggregateChunkIntervalSql(aggregate: ContinuousAggregateSnapshot): string {
+  return `-- Set the chunk interval of ${
+    qualify(aggregate.schema, aggregate.name)
+  } to ${aggregate.chunkInterval}.\nALTER MATERIALIZED VIEW ${
+    qualify(aggregate.schema, aggregate.name)
+  } SET (timescaledb.chunk_interval = ${intervalLiteral(aggregate.chunkInterval ?? '')});`
+}
+
 export function leaveHypertableDimensionSql(ht: HypertableSnapshot): string {
   return `-- ${qualify(ht.schema, ht.name)} keeps its space partition on ${
     quoteIdent(ht.partitioningColumn ?? '')
@@ -190,6 +227,10 @@ function intervalLiteral(value: string): string {
 
 function timestampLiteral(value: string): string {
   return `${quoteLiteral(value)}::timestamptz`
+}
+
+function stripSemicolon(query: string): string {
+  return query.trim().replace(/;\s*$/, '')
 }
 
 function orderFragment(order: HypertableColumnstoreSnapshot['orderBy'][number]): string {

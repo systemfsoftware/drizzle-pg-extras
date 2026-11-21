@@ -9,6 +9,7 @@ import {
 import { quoteIdent, quoteLiteral } from './quote.js'
 import type {
   CommentSnapshot,
+  ContinuousAggregateSnapshot,
   HypertableSnapshot,
   InventoryView,
   PartitionedTableSnapshot,
@@ -30,8 +31,12 @@ import {
   addColumnstorePolicySql,
   addHypertableDimensionSql,
   addRetentionPolicySql,
+  alterContinuousAggregateChunkIntervalSql,
+  alterContinuousAggregateRealTimeSql,
+  createContinuousAggregateSql,
   createHypertableStatements,
   disableHypertableColumnstoreSql,
+  dropContinuousAggregateSql,
   enableHypertableColumnstoreSql,
   leaveChunkIntervalSql,
   leaveHypertableDimensionSql,
@@ -66,6 +71,9 @@ export function idempotentStatements(snapshot: Snapshot): string[] {
   if (sqlFunctions) statements.push('SET check_function_bodies = on')
   statements.push(...partitionStatements(snapshot))
   for (const hypertable of snapshot.hypertables) statements.push(...createHypertableStatements(hypertable))
+  for (const aggregate of orderedContinuousAggregates(snapshot.continuousAggregates)) {
+    statements.push(createContinuousAggregateSql(aggregate))
+  }
   for (const comment of snapshot.comments) {
     if (comment.kind !== 'trigger') statements.push(commentSql(comment, comment.text))
   }
@@ -119,8 +127,10 @@ function statementsBetween(from: Snapshot, to: Snapshot, skipDroppedTables: bool
   const droppedTriggerIds = new Set(triggersToDrop.map((trigger) => trigger.id))
 
   const statements: string[] = []
+  const caggs = continuousAggregateChanges(from, to, skipDroppedTables)
   for (const trigger of triggersToDrop) statements.push(dropTriggerSql(trigger))
   statements.push(...partitionChanges(from, to, skipDroppedTables))
+  statements.push(...caggs.drop)
 
   const fnIds = [...dropFnIds].sort()
   for (const id of fnIds) statements.push(dropFunctionSql(fromFns.get(id)!))
@@ -149,6 +159,7 @@ function statementsBetween(from: Snapshot, to: Snapshot, skipDroppedTables: bool
   if (needsBodyOff) statements.push('SET check_function_bodies = off')
   for (const fn of fnsToWrite) statements.push(createFunctionSql(fn))
   if (needsBodyOff) statements.push('SET check_function_bodies = on')
+  statements.push(...caggs.write)
 
   emitComments(
     statements,
@@ -162,6 +173,8 @@ function statementsBetween(from: Snapshot, to: Snapshot, skipDroppedTables: bool
     toTriggers,
     toExt,
     skipDroppedTables,
+    caggs.rebuilt,
+    caggs.dropped,
     'other',
   )
 
@@ -188,6 +201,8 @@ function statementsBetween(from: Snapshot, to: Snapshot, skipDroppedTables: bool
     toTriggers,
     toExt,
     skipDroppedTables,
+    caggs.rebuilt,
+    caggs.dropped,
     'trigger',
   )
 
@@ -195,7 +210,10 @@ function statementsBetween(from: Snapshot, to: Snapshot, skipDroppedTables: bool
     if (!toExt.has(ext.id)) {
       // Down SQL for a new hypertable leaves the table as a hypertable, so dropping
       // timescaledb in that same file would fail. A forward drop still emits DROP EXTENSION.
-      if (ext.name === 'timescaledb' && !skipDroppedTables && from.hypertables.length > 0) continue
+      if (
+        ext.name === 'timescaledb' && !skipDroppedTables &&
+        (from.hypertables.length > 0 || from.continuousAggregates.length > 0)
+      ) continue
       statements.push(dropExtensionSql(ext))
     }
   }
@@ -221,6 +239,8 @@ function emitComments(
   toTriggers: Map<string, TriggerSnapshot>,
   toExt: Map<string, Snapshot['extensions'][number]>,
   skipDroppedTables: boolean,
+  rebuiltCaggs: Set<string>,
+  droppedCaggs: Set<string>,
   mode: 'trigger' | 'other',
 ): void {
   const ids = [...new Set([...fromComments.keys(), ...toComments.keys()])].sort()
@@ -232,12 +252,12 @@ function emitComments(
     if (mode === 'trigger' ? subject.kind !== 'trigger' : subject.kind === 'trigger') continue
     if (
       prev && next && prev.text === next.text &&
-      !commentRewritten(next, dropFnIds, toFns, droppedTriggerIds, toTriggers)
+      !commentRewritten(next, dropFnIds, toFns, droppedTriggerIds, toTriggers, rebuiltCaggs)
     ) {
       continue
     }
     if (!next && prev) {
-      if (skipCommentNull(prev, to, toFns, toTriggers, toExt, skipDroppedTables, from)) continue
+      if (skipCommentNull(prev, to, toFns, toTriggers, toExt, skipDroppedTables, from, droppedCaggs)) continue
       statements.push(commentSql(prev, null))
       continue
     }
@@ -251,12 +271,14 @@ function commentRewritten(
   toFns: Map<string, Snapshot['functions'][number]>,
   droppedTriggerIds: Set<string>,
   toTriggers: Map<string, TriggerSnapshot>,
+  rebuiltCaggs: Set<string>,
 ): boolean {
   if (comment.kind === 'function') {
     const id = functionSignature(comment.schema, comment.name, comment.argTypes ?? [])
     return dropFnIds.has(id) && toFns.has(id)
   }
   if (comment.kind === 'trigger') return droppedTriggerIds.has(comment.id) && toTriggers.has(comment.id)
+  if (comment.kind === 'materializedView') return rebuiltCaggs.has(`${comment.schema}.${comment.name}`)
   return false
 }
 
@@ -268,12 +290,14 @@ function skipCommentNull(
   toExt: Map<string, Snapshot['extensions'][number]>,
   skipDroppedTables: boolean,
   from: Snapshot,
+  droppedCaggs: Set<string>,
 ): boolean {
   if (comment.kind === 'function') {
     return !toFns.has(functionSignature(comment.schema, comment.name, comment.argTypes ?? []))
   }
   if (comment.kind === 'trigger') return !toTriggers.has(comment.id)
   if (comment.kind === 'extension') return !toExt.has(comment.name)
+  if (comment.kind === 'materializedView' && droppedCaggs.has(`${comment.schema}.${comment.name}`)) return true
   return skipDroppedTables && targetGone(from, to, comment)
 }
 
@@ -365,6 +389,149 @@ function alterHypertable(prev: HypertableSnapshot, next: HypertableSnapshot, for
 function describeSpace(ht: HypertableSnapshot): string {
   if (!ht.partitioningColumn) return 'none'
   return `${ht.partitioningColumn} (${ht.numberPartitions})`
+}
+
+type ContinuousAggregateChanges = {
+  drop: string[]
+  write: string[]
+  rebuilt: Set<string>
+  dropped: Set<string>
+}
+
+function continuousAggregateChanges(
+  from: Snapshot,
+  to: Snapshot,
+  forward: boolean,
+): ContinuousAggregateChanges {
+  const fromMap = new Map(from.continuousAggregates.map((item) => [item.id, item]))
+  const toMap = new Map(to.continuousAggregates.map((item) => [item.id, item]))
+  const removed: ContinuousAggregateSnapshot[] = []
+  const dropped = new Set<string>()
+
+  for (const prev of from.continuousAggregates) {
+    if (toMap.has(prev.id)) continue
+    if (forward) assertAggregateSourceStillDeclared(prev, to)
+    removed.push(prev)
+    dropped.add(`${prev.schema}.${prev.name}`)
+  }
+
+  const creates: ContinuousAggregateSnapshot[] = []
+  const alters: string[] = []
+  const rebuilt = new Set<string>()
+  const changedIds = new Set<string>()
+
+  for (const next of to.continuousAggregates) {
+    const prev = fromMap.get(next.id)
+    if (!prev) {
+      assertAggregateSourceDeclared(next, to)
+      creates.push(next)
+      continue
+    }
+    if (aggregateDefinitionChanged(prev, next)) {
+      removed.push(prev)
+      changedIds.add(next.id)
+      creates.push(next)
+      rebuilt.add(`${next.schema}.${next.name}`)
+      continue
+    }
+    if (prev.realTime !== next.realTime) alters.push(alterContinuousAggregateRealTimeSql(next))
+    if (prev.chunkInterval !== next.chunkInterval) {
+      if (next.chunkInterval === null) {
+        throw new PgExtrasError(
+          `continuous aggregate ${next.schema}.${next.name}: clearing chunkInterval is not supported. Set a new interval instead of removing it.`,
+        )
+      }
+      alters.push(alterContinuousAggregateChunkIntervalSql(next))
+    }
+  }
+
+  if (changedIds.size > 0) {
+    for (const child of [...from.continuousAggregates, ...to.continuousAggregates]) {
+      const parentId = child.source?.kind === 'continuousAggregate'
+        ? JSON.stringify(['continuousAggregate', child.source.schema, child.source.name])
+        : null
+      if (parentId && changedIds.has(parentId)) {
+        throw new PgExtrasError(
+          `continuous aggregate ${child.schema}.${child.name} sources an aggregate whose definition changed. Drop the child first, generate and migrate the parent change, then recreate the child.`,
+        )
+      }
+    }
+  }
+
+  const drop = [...orderedContinuousAggregates(removed)].reverse().map((item) => dropContinuousAggregateSql(item))
+  const write = [...orderedContinuousAggregates(creates).map((item) => createContinuousAggregateSql(item)), ...alters]
+  return { drop, write, rebuilt, dropped }
+}
+
+function aggregateDefinitionChanged(prev: ContinuousAggregateSnapshot, next: ContinuousAggregateSnapshot): boolean {
+  return prev.query !== next.query ||
+    JSON.stringify(prev.source) !== JSON.stringify(next.source) ||
+    prev.createGroupIndexes !== next.createGroupIndexes
+}
+
+function assertAggregateSourceStillDeclared(
+  aggregate: ContinuousAggregateSnapshot,
+  to: Snapshot,
+): void {
+  if (!aggregate.source || aggregate.source.kind !== 'hypertable') return
+  const declared = to.hypertables.some((ht) =>
+    ht.schema === aggregate.source!.schema && ht.name === aggregate.source!.name
+  )
+  if (!declared) {
+    throw new PgExtrasError(
+      `continuous aggregate ${aggregate.schema}.${aggregate.name} and its source table ${aggregate.source.schema}.${aggregate.source.name} were removed in one change. Remove the aggregate, generate and migrate, then remove the table.`,
+    )
+  }
+}
+
+function assertAggregateSourceDeclared(
+  aggregate: ContinuousAggregateSnapshot,
+  to: Snapshot,
+): void {
+  const source = aggregate.source
+  if (!source) return
+  if (source.kind === 'hypertable') {
+    if (!to.hypertables.some((ht) => ht.schema === source.schema && ht.name === source.name)) {
+      throw new PgExtrasError(
+        `continuous aggregate ${aggregate.schema}.${aggregate.name} sources ${source.schema}.${source.name}, which is not a declared hypertable. Declare the hypertable or change source.`,
+      )
+    }
+    return
+  }
+  if (!to.continuousAggregates.some((item) => item.schema === source.schema && item.name === source.name)) {
+    throw new PgExtrasError(
+      `continuous aggregate ${aggregate.schema}.${aggregate.name} sources ${source.schema}.${source.name}, which is not a declared continuous aggregate. Declare it or change source.`,
+    )
+  }
+}
+
+function orderedContinuousAggregates(
+  aggregates: readonly ContinuousAggregateSnapshot[],
+): ContinuousAggregateSnapshot[] {
+  const byId = new Map(aggregates.map((item) => [item.id, item]))
+  const ordered: ContinuousAggregateSnapshot[] = []
+  const done = new Set<string>()
+  const visiting = new Set<string>()
+  const visit = (aggregate: ContinuousAggregateSnapshot): void => {
+    if (done.has(aggregate.id)) return
+    if (visiting.has(aggregate.id)) {
+      throw new PgExtrasError(
+        `continuous aggregate ${aggregate.schema}.${aggregate.name} has a source cycle`,
+      )
+    }
+    visiting.add(aggregate.id)
+    if (aggregate.source?.kind === 'continuousAggregate') {
+      const parent = byId.get(
+        JSON.stringify(['continuousAggregate', aggregate.source.schema, aggregate.source.name]),
+      )
+      if (parent) visit(parent)
+    }
+    visiting.delete(aggregate.id)
+    done.add(aggregate.id)
+    ordered.push(aggregate)
+  }
+  for (const aggregate of aggregates) visit(aggregate)
+  return ordered
 }
 
 function partitionChanges(from: Snapshot, to: Snapshot, skipDroppedTables: boolean): string[] {
