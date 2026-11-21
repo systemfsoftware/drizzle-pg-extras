@@ -293,7 +293,7 @@ export type ContinuousAggregateRefreshPolicy = {
 
 export type ContinuousAggregate = {
   readonly [KIND]: 'continuousAggregate'
-  readonly view: PgMaterializedView | null
+  readonly view: PgViewLike | null
   readonly name: string
   readonly schema: string
   readonly query: string | SQL
@@ -1623,7 +1623,7 @@ export function hypertable(
  * declared hypertable or aggregate it reads from for ordering and rebuild safety.
  */
 export function continuousAggregate(
-  view: PgMaterializedView,
+  view: PgViewLike,
   config: ContinuousAggregateConfig,
 ): ContinuousAggregate
 export function continuousAggregate(
@@ -1631,10 +1631,10 @@ export function continuousAggregate(
   config: ContinuousAggregateConfig,
 ): ContinuousAggregate
 export function continuousAggregate(
-  viewOrName: PgMaterializedView | string | { name: string; schema?: string },
+  viewOrName: PgViewLike | string | { name: string; schema?: string },
   config: ContinuousAggregateConfig,
 ): ContinuousAggregate {
-  const view = isPgMaterializedView(viewOrName) ? viewOrName : null
+  const view = isPgView(viewOrName) || isPgMaterializedView(viewOrName) ? viewOrName : null
   const identity = continuousAggregateIdentity(viewOrName)
   const where = `continuousAggregate(${identity.schema}.${identity.name})`
   assertIdentifier('continuous aggregate', identity.name)
@@ -1772,16 +1772,18 @@ function readOptionalPositiveInt(value: number | undefined, where: string): numb
 }
 
 function continuousAggregateIdentity(
-  viewOrName: PgMaterializedView | string | { name: string; schema?: string },
+  viewOrName: PgViewLike | string | { name: string; schema?: string },
 ): { schema: string; name: string } {
-  if (isPgMaterializedView(viewOrName)) {
-    const materialized = getMaterializedViewConfig(viewOrName)
-    if (!materialized.isExisting) {
+  if (isPgView(viewOrName) || isPgMaterializedView(viewOrName)) {
+    const config = isPgMaterializedView(viewOrName)
+      ? getMaterializedViewConfig(viewOrName)
+      : getViewConfig(viewOrName)
+    if (!config.isExisting) {
       throw new PgExtrasError(
-        `continuousAggregate("${materialized.name}") requires a materialized view declared with .existing(). drizzle-kit would otherwise rewrite the view and drop timescaledb.continuous.`,
+        `continuousAggregate("${config.name}") requires a view declared with .existing(). drizzle-kit would otherwise rewrite the view and drop timescaledb.continuous.`,
       )
     }
-    return { schema: schemaName(materialized.schema), name: materialized.name }
+    return { schema: schemaName(config.schema), name: config.name }
   }
   if (typeof viewOrName === 'string') return { schema: 'public', name: viewOrName }
   return { schema: schemaName(viewOrName.schema), name: viewOrName.name }

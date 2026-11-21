@@ -289,7 +289,9 @@ function commentRewritten(
     return dropFnIds.has(id) && toFns.has(id)
   }
   if (comment.kind === 'trigger') return droppedTriggerIds.has(comment.id) && toTriggers.has(comment.id)
-  if (comment.kind === 'materializedView') return rebuiltCaggs.has(`${comment.schema}.${comment.name}`)
+  if (comment.kind === 'materializedView' || comment.kind === 'view') {
+    return rebuiltCaggs.has(`${comment.schema}.${comment.name}`)
+  }
   return false
 }
 
@@ -308,7 +310,9 @@ function skipCommentNull(
   }
   if (comment.kind === 'trigger') return !toTriggers.has(comment.id)
   if (comment.kind === 'extension') return !toExt.has(comment.name)
-  if (comment.kind === 'materializedView' && droppedCaggs.has(`${comment.schema}.${comment.name}`)) return true
+  if (comment.kind === 'materializedView' || comment.kind === 'view') {
+    if (droppedCaggs.has(`${comment.schema}.${comment.name}`)) return true
+  }
   return skipDroppedTables && targetGone(from, to, comment)
 }
 

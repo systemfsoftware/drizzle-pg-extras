@@ -19,9 +19,11 @@ export function createHypertableStatements(ht: HypertableSnapshot): string[] {
 }
 
 export function createHypertableSql(ht: HypertableSnapshot): string {
-  const args = [relation(ht), `by_range(${nameLiteral(ht.timeColumn)})`]
+  const range = ht.chunkTimeInterval
+    ? `by_range(${nameLiteral(ht.timeColumn)}, partition_interval => ${intervalLiteral(ht.chunkTimeInterval)})`
+    : `by_range(${nameLiteral(ht.timeColumn)})`
+  const args = [relation(ht), range]
   if (!ht.createDefaultIndexes) args.push('create_default_indexes => FALSE')
-  if (ht.chunkTimeInterval) args.push(`chunk_time_interval => ${intervalLiteral(ht.chunkTimeInterval)}`)
   if (ht.migrateData) args.push('migrate_data => TRUE')
   args.push('if_not_exists => TRUE')
   return `-- Convert ${qualify(ht.schema, ht.name)} into a TimescaleDB hypertable on ${
@@ -132,7 +134,9 @@ export function removeColumnstorePolicySql(ht: Pick<HypertableSnapshot, 'schema'
 export function createContinuousAggregateSql(aggregate: ContinuousAggregateSnapshot): string {
   const options = ['timescaledb.continuous']
   if (!aggregate.realTime) options.push('timescaledb.materialized_only = true')
-  if (aggregate.chunkInterval) options.push(`timescaledb.chunk_interval = ${intervalLiteral(aggregate.chunkInterval)}`)
+  if (aggregate.chunkInterval) {
+    options.push(`timescaledb.chunk_interval = ${quoteLiteral(aggregate.chunkInterval)}`)
+  }
   if (!aggregate.createGroupIndexes) options.push('timescaledb.create_group_indexes = false')
   return `-- Create the continuous aggregate ${
     qualify(aggregate.schema, aggregate.name)

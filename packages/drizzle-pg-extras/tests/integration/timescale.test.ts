@@ -44,7 +44,7 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       expect(upSql).toContain('CREATE EXTENSION IF NOT EXISTS "timescaledb"')
       expect(upSql.indexOf('CREATE EXTENSION')).toBeLessThan(upSql.indexOf('create_hypertable'))
       expect(upSql).toContain('if_not_exists => TRUE')
-      expect(upSql).toContain(`chunk_time_interval => INTERVAL '1 day'`)
+      expect(upSql).toContain(`partition_interval => INTERVAL '1 day'`)
       expect(upSql).toContain("by_hash('device_id'::name, 4)")
       expect(upSql).toContain('add_retention_policy')
       expect(upSql).toContain('add_columnstore_policy')
@@ -186,7 +186,9 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       await client.end()
     }
   })
+})
 
+describe.skipIf(!url)('timescaledb continuous aggregates', () => {
   it('migrates a hierarchical continuous aggregate stack and rebuilds a leaf', async () => {
     mkdirSync(root, { recursive: true })
     const dir = mkdtempSync(path.join(root, 'cagg-'))
@@ -272,7 +274,7 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
 })
 
 function aggregateSchemaSource(sourcePath: string, leafAggregate = 'avg', parentAggregate = 'avg'): string {
-  return `import { integer, pgMaterializedView, pgTable, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
+  return `import { integer, pgTable, pgView, primaryKey, text, timestamp } from "drizzle-orm/pg-core";
 import { continuousAggregate, hypertable, pgExtension, withComment } from ${JSON.stringify(sourcePath)};
 
 export const timescale = pgExtension("timescaledb");
@@ -290,14 +292,14 @@ export const metricsHypertable = hypertable(metrics, {
   chunkTimeInterval: "1 day",
 });
 
-const hourlyView = withComment(pgMaterializedView("metrics_hourly", {
+const hourlyView = withComment(pgView("metrics_hourly", {
   bucket: timestamp("bucket", { withTimezone: true }),
   deviceId: text("device_id"),
   value: integer("value"),
 }).existing(), "Hourly metrics");
 
 export const metricsHourly = continuousAggregate(hourlyView, {
-  query: \`SELECT time_bucket('1 hour', time) AS bucket, device_id, ${parentAggregate}(value) AS value FROM metrics GROUP BY bucket, device_id\`,
+  query: \`SELECT time_bucket('1 hour', time) AS bucket, device_id, ${parentAggregate}(value) AS value FROM metrics GROUP BY time_bucket('1 hour', time), device_id\`,
   source: metricsHypertable,
   chunkInterval: "1 hour",
   refreshPolicies: [{ startOffset: "1 month", endOffset: "1 hour", scheduleInterval: "1 hour" }],
@@ -306,14 +308,14 @@ export const metricsHourly = continuousAggregate(hourlyView, {
   retention: { dropAfter: "6 months" },
 });
 
-const dailyView = pgMaterializedView("metrics_daily", {
+const dailyView = pgView("metrics_daily", {
   bucket: timestamp("bucket", { withTimezone: true }),
   deviceId: text("device_id"),
   value: integer("value"),
 }).existing();
 
 export const metricsDaily = continuousAggregate(dailyView, {
-  query: \`SELECT time_bucket('1 day', bucket) AS bucket, device_id, ${leafAggregate}(value) AS value FROM metrics_hourly GROUP BY bucket, device_id\`,
+  query: \`SELECT time_bucket('1 day', bucket) AS bucket, device_id, ${leafAggregate}(value) AS value FROM metrics_hourly GROUP BY time_bucket('1 day', bucket), device_id\`,
   source: metricsHourly,
 });
 `

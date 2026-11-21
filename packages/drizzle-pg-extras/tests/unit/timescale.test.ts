@@ -51,7 +51,7 @@ describe('hypertable sql', () => {
     const up = diff.up.join('\n')
     expect(up.indexOf('CREATE EXTENSION IF NOT EXISTS "timescaledb"')).toBeLessThan(up.indexOf('create_hypertable'))
     expect(up).toContain(
-      `SELECT create_hypertable('"public"."metrics"'::regclass, by_range('time'::name), chunk_time_interval => INTERVAL '1 day', if_not_exists => TRUE);`,
+      `SELECT create_hypertable('"public"."metrics"'::regclass, by_range('time'::name, partition_interval => INTERVAL '1 day'), if_not_exists => TRUE);`,
     )
     expect(up).toContain(
       `SELECT add_dimension('"public"."metrics"'::regclass, by_hash('device_id'::name, 4), if_not_exists => TRUE);`,
@@ -184,7 +184,7 @@ describe('hypertable sql', () => {
     )
     expect(snap.hypertables[0]).toMatchObject({ schema: 'market', name: 'readings', timeColumn: 'created_at' })
     expect(diffSnapshots(emptySnapshot(), snap).up.join('\n')).toContain(
-      `SELECT create_hypertable('"market"."readings"'::regclass, by_range('created_at'::name), chunk_time_interval => INTERVAL '1 hour', if_not_exists => TRUE);`,
+      `SELECT create_hypertable('"market"."readings"'::regclass, by_range('created_at'::name, partition_interval => INTERVAL '1 hour'), if_not_exists => TRUE);`,
     )
   })
 
