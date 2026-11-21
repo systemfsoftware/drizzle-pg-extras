@@ -37,16 +37,20 @@ jobs:
             printf '%s\n' "$unexpected"
             exit 1
           fi
-          # A manifest may change its version field and nothing else.
-          for manifest in $(git diff --name-only "$base" HEAD -- 'packages/*/package.json'); do
-            changed=$(git diff -U0 "$base" HEAD -- "$manifest" | grep -E '^[+-]' | grep -vE '^(\+\+\+|---)' || true)
-            bad=$(printf '%s\n' "$changed" | grep -vE '^[+-][[:space:]]*"version":' || true)
-            if [ -n "$bad" ]; then
-              echo "::error::$manifest changes more than its version:"
-              printf '%s\n' "$bad"
+          # A manifest may change its version value and nothing else, compared structurally so formatting and key
+          # order cannot hide a second change.
+          while IFS= read -r -d '' manifest; do
+            before=$(git show "$base:$manifest" | jq -S 'del(.version)')
+            after=$(jq -S 'del(.version)' "$manifest")
+            if [ "$before" != "$after" ]; then
+              echo "::error::$manifest changes more than its version"
               exit 1
             fi
-          done
+            if [ "$(git show "$base:$manifest" | jq -r .version)" = "$(jq -r .version "$manifest")" ]; then
+              echo "::error::$manifest keeps its version"
+              exit 1
+            fi
+          done < <(git diff -z --name-only "$base" HEAD -- 'packages/*/package.json')
       - name: Main's CI on the base commit passed
         env:
           BASE: ${{ steps.base.outputs.sha }}
