@@ -2,6 +2,7 @@ import { is } from 'drizzle-orm'
 import { isPgEnum, isPgMaterializedView, isPgView, PgTable } from 'drizzle-orm/pg-core'
 import {
   type AnyPgEnum,
+  type ContinuousAggregate,
   extrasKind,
   type Hypertable,
   isPlainRecord,
@@ -29,6 +30,7 @@ export function collectExtras(modules: Record<string, unknown> | readonly Record
     partitions: [],
     detaches: [],
     hypertables: [],
+    continuousAggregates: [],
   }
   const seen = new Set<unknown>()
   const list = Array.isArray(modules) ? modules : [modules]
@@ -54,6 +56,7 @@ export function defineExtras(input: {
   partitions?: readonly PgPartition[]
   detaches?: readonly PgDetach[]
   hypertables?: readonly Hypertable[]
+  continuousAggregates?: readonly ContinuousAggregate[]
 }): PgExtras {
   return collectExtras({
     functions: input.functions ?? [],
@@ -67,6 +70,7 @@ export function defineExtras(input: {
     partitions: input.partitions ?? [],
     detaches: input.detaches ?? [],
     hypertables: input.hypertables ?? [],
+    continuousAggregates: input.continuousAggregates ?? [],
   })
 }
 
@@ -115,6 +119,13 @@ function walk(value: unknown, extras: PgExtras, seen: Set<unknown>): void {
     const hypertable = value as Hypertable
     extras.hypertables.push(hypertable)
     if (is(hypertable.table, PgTable)) walk(hypertable.table, extras, seen)
+    return
+  }
+  if (kind === 'continuousAggregate') {
+    const aggregate = value as ContinuousAggregate
+    extras.continuousAggregates.push(aggregate)
+    if (aggregate.view) walk(aggregate.view, extras, seen)
+    if (aggregate.source) walk(aggregate.source, extras, seen)
     return
   }
   if (isPgView(value) || isPgMaterializedView(value)) {
