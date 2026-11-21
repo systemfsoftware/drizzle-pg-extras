@@ -1,15 +1,16 @@
 ---
-title: "Removing the last sparse index left the old columnstore setting"
+title: "Clearing sparse indexes needs RESET, not an empty string"
 category: integration-issues
 module: timescaledb
 date: "2026-11-21"
 problem_type: integration_issue
 component: migration_generation
-severity: high
+severity: critical
 symptoms:
   - "removing every sparseIndex entry produced no timescaledb.sparse_index option"
   - "the hypertable kept its previous bloom or minmax sparse index after regeneration"
-root_cause: omission_is_not_reset
+  - "timescaledb.sparse_index = '' crashed TimescaleDB 2.32.1 on INSERT, UPDATE, or DELETE against columnstore chunks"
+root_cause: unsafe_clear_value
 resolution_type: code_fix
 related_components:
   - migration_generation
@@ -18,63 +19,64 @@ tags:
   - columnstore
   - sparse-index
   - alter-table
+  - reset
   - diff
 ---
 
-# Removing the last sparse index left the old columnstore setting
+# Clearing sparse indexes needs RESET, not an empty string
 
 ## Problem
 
-The columnstore settings renderer built the `ALTER TABLE ... SET (...)` option list only from non-empty collections. When a declaration changed from one or more sparse indexes to none, the renderer emitted no `timescaledb.sparse_index` option. TimescaleDB treats an option absent from `SET` as unchanged, so the previous sparse index survived regeneration even though the schema no longer declared it. The diff looked correct at the declaration level and wrong at the database level.
+In `@systemfsoftware/drizzle-pg-extras`, the exported `enableHypertableColumnstoreSql` renderer built the `ALTER TABLE ... SET (...)` option list only from non-empty collections. When a declaration changed from one or more sparse indexes to none, the renderer emitted no `timescaledb.sparse_index` option. TimescaleDB treats an option absent from `SET` as unchanged, so the previous sparse index survived regeneration even though the schema no longer declared it.
+
+The first correction emitted `timescaledb.sparse_index = ''` to force a change. TimescaleDB 2.32.1 accepts that DDL, then crashes on ordinary `INSERT`, `UPDATE`, or `DELETE` against a chunk in the columnstore. The empty string is a distinct, unsafe configuration, not a neutral clear. The server's documented clear is `ALTER TABLE ... RESET (timescaledb.sparse_index)`, which removes the explicit configuration and re-enables default sparse-index selection.
 
 ## Mechanism
 
-`timescaledb.sparse_index` is a single text option on the hypertable. Its lifecycle has three distinct states:
+`timescaledb.sparse_index` has three states:
 
 1. Never configured: TimescaleDB chooses a default sparse index from the columnstore settings.
 2. Configured with one or more indexes: the explicit text value applies to future chunks.
-3. Explicitly empty: no sparse index is selected.
+3. Cleared with `RESET`: the explicit configuration is removed and the server default applies again.
 
-Removing the last declared index moves the model from state 2 to state 3. Omitting the option moves the database to state 1 only if it was never configured; on an existing hypertable it performs no change. The generated `SET` list therefore must contain an explicit empty value on the transition, not an absent key.
+Removing the last declared index moves the model from state 2 to state 3. Omitting the option leaves the database in state 2 because `ALTER ... SET` only changes named options. Writing `''` creates a fourth state — an explicit empty configuration — which is accepted at DDL time but crashes DML on columnstore chunks in 2.32.1.
 
-The clearing transition renders:
+The clearing transition must render a separate statement:
 
 ```sql
 ALTER TABLE metrics SET (
   timescaledb.segmentby = 'device_id',
-  timescaledb.orderby = 'time',
-  timescaledb.sparse_index = ''
+  timescaledb.orderby = 'time'
 );
+
+ALTER TABLE metrics RESET (timescaledb.sparse_index);
 ```
 
 ## Architectural Invariants
 
-**Absent Is Not Clear:** for an `ALTER ... SET` option, omission means "leave the current value". A collection that can become empty needs an explicit clearing value in the option list; the renderer must branch on the transition, not only on the new collection's length.
+**Absent Is Not Clear:** for an `ALTER ... SET` option, omission means "leave the current value". A collection that can become empty needs an explicit transition, not an absent key.
 
-**Model State Is Explicit:** every nullable or collection-valued setting has a rendered representation for each state, including empty. A conditional that only pushes non-empty values silently drops the empty state.
+**Use the Server's Reset Verb:** clearing a configuration means `RESET (option)`. An empty string is a value with its own behavior; it is never a substitute for removing a configuration.
 
-The anti-pattern is an option builder with no empty branch:
+**DML-Verified Clearing:** a clearing migration is verified by running `INSERT`, `UPDATE`, and `DELETE` against a hypertable with columnstore chunks after the migration. DDL success alone does not prove the resulting configuration is safe.
+
+The anti-pattern is a magic empty value:
 
 ```text
-if (sparseIndexes.length > 0) {
-  options.push(sparseIndexOption(sparseIndexes));
+if (sparseIndexes.length === 0 && previousSparseIndexes.length > 0) {
+  options.push("timescaledb.sparse_index = ''");
 }
 ```
 
-The invariant form also emits the clearing option when the previous state was non-empty:
+The invariant form emits the reset statement after the `SET` list:
 
 ```text
-if (sparseIndexes.length > 0) {
-  options.push(sparseIndexOption(sparseIndexes));
-} else if (previousSparseIndexes.length > 0) {
-  options.push(emptySparseIndexOption());
-}
+const reset = sparseIndexes.length === 0 && previousSparseIndexes.length > 0;
+return setStatement + (reset ? "ALTER TABLE ... RESET (timescaledb.sparse_index);" : "");
 ```
-
-The empty-string setting explicitly disables sparse indexing. Re-enabling the server's default selection is a different operation, `ALTER TABLE ... RESET (timescaledb.sparse_index)`, and must not be conflated with clearing an explicit declaration.
 
 ## Prevention
 
-- Test the populated-to-empty transition, not only empty-to-populated; assert that the generated SQL contains the clearing option.
-- Treat every removable collection in an `ALTER ... SET` renderer as requiring an empty-state branch.
-- Compare the declarative model with the database after the clearing migration, not only the generated SQL text.
+- Test the populated-to-empty transition, not only empty-to-populated; assert that the generated SQL contains `RESET (timescaledb.sparse_index)` and never `timescaledb.sparse_index = ''`.
+- After clearing, run `INSERT`, `UPDATE`, and `DELETE` against a hypertable that still has columnstore chunks; all three must succeed.
+- Treat every removable option as requiring the server's reset form, not an invented empty value.

@@ -451,7 +451,8 @@ describe('hypertable definition checks', () => {
       })],
     }))
     const reset = diffSnapshots(sparse, cleared).up.join('\n')
-    expect(reset).toContain(`timescaledb.sparse_index = ''`)
+    expect(reset).toContain('ALTER TABLE "public"."metrics" RESET (timescaledb.sparse_index);')
+    expect(reset).not.toContain(`timescaledb.sparse_index = ''`)
     expect(reset).not.toContain('minmax("time")')
   })
 

@@ -122,6 +122,32 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       )
       expect(reorder.rowCount).toBe(1)
 
+      writeFileSync(
+        path.join(dir, 'schema.ts'),
+        schemaSource(source, {
+          chunk: '2 days',
+          dropAfter: '3 months',
+          direction: 'asc',
+          reorder: true,
+          sparse: false,
+        }),
+      )
+      process.chdir(dir)
+      expect(await run(['generate', '--name', 'sparse_clear'])).toBe(0)
+      process.chdir(cwd)
+      const sparseSql = readFileSync(migrationFile(path.join(dir, 'drizzle'), 'sparse_clear'), 'utf8')
+      expect(sparseSql).toContain('ALTER TABLE "public"."metrics" RESET (timescaledb.sparse_index);')
+      expect(sparseSql).not.toContain(`timescaledb.sparse_index = ''`)
+      const sparseMigrate = kitExec(dir, ['migrate', '--config', 'drizzle.config.ts'])
+      expect(sparseMigrate.status, sparseMigrate.stderr + sparseMigrate.stdout).toBe(0)
+      expect(await columnstoreChunkCount(client, 'public', 'metrics')).toBe(1)
+
+      await client.query(`INSERT INTO metrics (time, device_id, value) VALUES (now(), 'device-c', 4)`)
+      const updated = await client.query(`UPDATE metrics SET value = 3 WHERE device_id = 'device-b'`)
+      expect(updated.rowCount).toBe(1)
+      const deleted = await client.query(`DELETE FROM metrics WHERE device_id = 'device-b'`)
+      expect(deleted.rowCount).toBe(1)
+
       expect(await intervalEquals(client, 'public', 'metrics', 'time', '2 days')).toBe(true)
       expect(await policyInterval(client, 'metrics', 'policy_retention', 'drop_after', '3 months')).toBe(true)
 
@@ -138,7 +164,7 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       const kept = await client.query<{ device_id: string; value: number }>(
         `SELECT device_id, value FROM metrics ORDER BY value`,
       )
-      expect(kept.rows).toEqual([{ device_id: 'device-a', value: 1 }, { device_id: 'device-b', value: 2 }])
+      expect(kept.rows).toEqual([{ device_id: 'device-a', value: 1 }, { device_id: 'device-c', value: 4 }])
       const jobs = await client.query(`SELECT 1 FROM timescaledb_information.jobs WHERE hypertable_name = 'metrics'`)
       expect(jobs.rowCount).toBe(0)
       const still = await client.query(
@@ -351,7 +377,7 @@ function hypertableSql(migrateData: boolean): string {
 
 function schemaSource(
   sourcePath: string,
-  options?: { chunk?: string; dropAfter?: string; direction?: string; reorder?: boolean },
+  options?: { chunk?: string; dropAfter?: string; direction?: string; reorder?: boolean; sparse?: boolean },
 ): string {
   const chunk = options?.chunk ?? '1 day'
   const dropAfter = options?.dropAfter ?? '6 months'
@@ -377,7 +403,7 @@ export const metricsHypertable = hypertable(metrics, {
   columnstore: {
     segmentBy: [metrics.deviceId],
     orderBy: [{ column: metrics.time, direction: "${direction}" }],
-    sparseIndex: [{ type: "bloom", columns: [metrics.value] }],
+    ${options?.sparse === false ? '' : 'sparseIndex: [{ type: "bloom", columns: [metrics.value] }],'}
   },
   retention: { dropAfter: "${dropAfter}", scheduleInterval: "1 day" },
   columnstorePolicy: { after: "7 days" },

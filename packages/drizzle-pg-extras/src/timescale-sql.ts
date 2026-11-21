@@ -65,10 +65,12 @@ export function enableHypertableColumnstoreSql(
     .map((index) => `${index.type}(${index.columns.map((column) => quoteIdent(column)).join(', ')})`)
     .join(', ')
   if (sparse.length > 0) options.push(`timescaledb.sparse_index = ${quoteLiteral(sparse)}`)
-  else if ((previous?.sparseIndex.length ?? 0) > 0) options.push(`timescaledb.sparse_index = ''`)
-  return `-- Enable the columnstore on ${qualify(ht.schema, ht.name)}.\nALTER TABLE ${
-    qualify(ht.schema, ht.name)
-  } SET (\n  ${options.join(',\n  ')}\n);`
+  const resetSparse = sparse.length === 0 && (previous?.sparseIndex.length ?? 0) > 0
+  const setSql = `ALTER TABLE ${qualify(ht.schema, ht.name)} SET (\n  ${options.join(',\n  ')}\n);`
+  const resetSql = resetSparse
+    ? `\nALTER TABLE ${qualify(ht.schema, ht.name)} RESET (timescaledb.sparse_index);`
+    : ''
+  return `-- Enable the columnstore on ${qualify(ht.schema, ht.name)}.\n${setSql}${resetSql}`
 }
 
 export function disableHypertableColumnstoreSql(ht: Pick<HypertableSnapshot, 'schema' | 'name'>): string {
