@@ -44,7 +44,7 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       expect(upSql).toContain('CREATE EXTENSION IF NOT EXISTS "timescaledb"')
       expect(upSql.indexOf('CREATE EXTENSION')).toBeLessThan(upSql.indexOf('create_hypertable'))
       expect(upSql).toContain('if_not_exists => TRUE')
-      expect(upSql).toContain(`chunk_time_interval => INTERVAL '1 day'`)
+      expect(upSql).toContain(`partition_interval => INTERVAL '1 day'`)
       expect(upSql).toContain("by_hash('device_id'::name, 4)")
       expect(upSql).toContain('add_retention_policy')
       expect(upSql).toContain('add_columnstore_policy')
