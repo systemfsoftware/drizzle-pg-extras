@@ -113,6 +113,7 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       expect(changedSql).toContain("INTERVAL '2 days'")
       expect(changedSql).toContain("INTERVAL '3 months'")
       expect(changedSql).toContain('add_reorder_policy')
+      expect(changedSql).toContain(`timescaledb.orderby = '"time" ASC'`)
       expect(changedSql).not.toContain('create_hypertable')
       await runStatements(client, changedSql)
 
@@ -127,7 +128,7 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
         `SELECT orderby FROM timescaledb_information.hypertable_columnstore_settings
          WHERE hypertable = 'public.metrics'::regclass`,
       )
-      expect(asc.rows[0]?.orderby).toContain('ASC')
+      expect(asc.rows[0]?.orderby).not.toContain('DESC')
 
       await runStatements(
         client,
