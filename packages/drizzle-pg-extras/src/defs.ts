@@ -230,19 +230,25 @@ export type HypertableOrderSpec = {
   nulls: 'first' | 'last' | null
 }
 
-export type HypertableCompression = {
+export type HypertableColumnstore = {
   segmentBy: readonly (AnyPgColumn | string)[]
   orderBy: readonly HypertableOrderSpec[]
 }
 
 export type HypertableRetention = {
-  dropAfter: string
+  dropAfter: string | null
+  dropCreatedBefore: string | null
   scheduleInterval: string | null
+  initialStart: string | null
+  timezone: string | null
 }
 
-export type HypertableCompressionPolicy = {
-  compressAfter: string
+export type HypertableColumnstorePolicy = {
+  after: string | null
+  createdBefore: string | null
   scheduleInterval: string | null
+  initialStart: string | null
+  timezone: string | null
 }
 
 /**
@@ -257,9 +263,10 @@ export type Hypertable = {
   readonly partitioningColumn: AnyPgColumn | string | null
   readonly numberPartitions: number | null
   readonly migrateData: boolean
-  readonly compression: HypertableCompression | null
+  readonly createDefaultIndexes: boolean
+  readonly columnstore: HypertableColumnstore | null
   readonly retention: HypertableRetention | null
-  readonly compressionPolicy: HypertableCompressionPolicy | null
+  readonly columnstorePolicy: HypertableColumnstorePolicy | null
 }
 
 export type PgExtras = {
@@ -1380,7 +1387,8 @@ type DrizzleHypertableConfig<TTable extends PgTable> = {
   partitioningColumn?: TTable['_']['columns'][keyof TTable['_']['columns']]
   numberPartitions?: number
   migrateData?: boolean
-  compression?: {
+  createDefaultIndexes?: boolean
+  columnstore?: {
     segmentBy?: readonly TTable['_']['columns'][keyof TTable['_']['columns']][]
     orderBy?: readonly (
       | TTable['_']['columns'][keyof TTable['_']['columns']]
@@ -1391,8 +1399,20 @@ type DrizzleHypertableConfig<TTable extends PgTable> = {
       }
     )[]
   }
-  retention?: { dropAfter: string; scheduleInterval?: string }
-  compressionPolicy?: { compressAfter: string; scheduleInterval?: string }
+  retention?: {
+    dropAfter?: string
+    dropCreatedBefore?: string
+    scheduleInterval?: string
+    initialStart?: string
+    timezone?: string
+  }
+  columnstorePolicy?: {
+    after?: string
+    createdBefore?: string
+    scheduleInterval?: string
+    initialStart?: string
+    timezone?: string
+  }
 }
 
 type NameHypertableConfig = {
@@ -1401,12 +1421,25 @@ type NameHypertableConfig = {
   partitioningColumn?: string
   numberPartitions?: number
   migrateData?: boolean
-  compression?: {
+  createDefaultIndexes?: boolean
+  columnstore?: {
     segmentBy?: readonly string[]
     orderBy?: readonly (string | { column: string; direction?: 'asc' | 'desc'; nulls?: 'first' | 'last' })[]
   }
-  retention?: { dropAfter: string; scheduleInterval?: string }
-  compressionPolicy?: { compressAfter: string; scheduleInterval?: string }
+  retention?: {
+    dropAfter?: string
+    dropCreatedBefore?: string
+    scheduleInterval?: string
+    initialStart?: string
+    timezone?: string
+  }
+  columnstorePolicy?: {
+    after?: string
+    createdBefore?: string
+    scheduleInterval?: string
+    initialStart?: string
+    timezone?: string
+  }
 }
 
 /**
@@ -1452,9 +1485,17 @@ export function hypertable(
   if (config.migrateData !== undefined && typeof config.migrateData !== 'boolean') {
     throw new PgExtrasError(`${where}: migrateData must be a boolean`)
   }
-  if (config.compressionPolicy && !config.compression) {
+  if (config.createDefaultIndexes !== undefined && typeof config.createDefaultIndexes !== 'boolean') {
+    throw new PgExtrasError(`${where}: createDefaultIndexes must be a boolean`)
+  }
+  if (config.migrateData === true && partitioningColumn !== null) {
     throw new PgExtrasError(
-      `${where}: compressionPolicy requires compression. Pass compression: {} or set segmentBy and orderBy.`,
+      `${where}: migrateData cannot be combined with partitioningColumn. create_hypertable migrates rows first, and add_dimension only runs on an empty hypertable. Set migrateData: false or omit the space partition.`,
+    )
+  }
+  if (config.columnstorePolicy && !config.columnstore) {
+    throw new PgExtrasError(
+      `${where}: columnstorePolicy requires columnstore. Pass columnstore: {} or set segmentBy and orderBy.`,
     )
   }
   const keyColumns = [timeColumn, ...(partitioningColumn ? [partitioningColumn] : [])].filter(
@@ -1480,29 +1521,30 @@ export function hypertable(
       partitioningColumn,
       numberPartitions,
       migrateData: config.migrateData ?? false,
-      compression: config.compression ? readCompression(drizzleTable, config.compression, where) : null,
+      createDefaultIndexes: config.createDefaultIndexes ?? true,
+      columnstore: config.columnstore ? readColumnstore(drizzleTable, config.columnstore, where) : null,
       retention: config.retention ? readRetention(config.retention, where) : null,
-      compressionPolicy: config.compressionPolicy ? readCompressionPolicy(config.compressionPolicy, where) : null,
+      columnstorePolicy: config.columnstorePolicy ? readColumnstorePolicy(config.columnstorePolicy, where) : null,
     },
     'hypertable',
   )
 }
 
-function readCompression(
+function readColumnstore(
   table: PgTable | null,
-  compression: { segmentBy?: readonly (AnyPgColumn | string)[]; orderBy?: readonly HypertableOrderInput[] },
+  columnstore: { segmentBy?: readonly (AnyPgColumn | string)[]; orderBy?: readonly HypertableOrderInput[] },
   where: string,
-): HypertableCompression {
-  const segmentBy = (compression.segmentBy ?? []).map((column, index) =>
-    resolveHypertableColumn(table, column, `${where} compression.segmentBy[${index}]`)
+): HypertableColumnstore {
+  const segmentBy = (columnstore.segmentBy ?? []).map((column, index) =>
+    resolveHypertableColumn(table, column, `${where} columnstore.segmentBy[${index}]`)
   )
-  const orderBy = (compression.orderBy ?? []).map((entry, index) =>
-    readOrder(table, entry, `${where} compression.orderBy[${index}]`)
+  const orderBy = (columnstore.orderBy ?? []).map((entry, index) =>
+    readOrder(table, entry, `${where} columnstore.orderBy[${index}]`)
   )
-  assertDistinctColumns(segmentBy, `${where} compression.segmentBy`)
+  assertDistinctColumns(segmentBy, `${where} columnstore.segmentBy`)
   assertDistinctColumns(
     orderBy.map((entry) => entry.column),
-    `${where} compression.orderBy`,
+    `${where} columnstore.orderBy`,
   )
   return { segmentBy, orderBy }
 }
@@ -1525,34 +1567,82 @@ function readOrder(table: PgTable | null, entry: HypertableOrderInput, where: st
   return { column: resolveHypertableColumn(table, entry.column, where), direction, nulls }
 }
 
+type PolicyTiming = {
+  scheduleInterval?: string
+  initialStart?: string
+  timezone?: string
+}
+
 function readRetention(
-  retention: { dropAfter: string; scheduleInterval?: string },
+  retention: { dropAfter?: string; dropCreatedBefore?: string } & PolicyTiming,
   where: string,
 ): HypertableRetention {
-  if (retention.dropAfter === undefined) {
-    throw new PgExtrasError(`${where} retention requires dropAfter, such as "6 months"`)
+  const dropAfter = retention.dropAfter === undefined
+    ? null
+    : normalizeInterval(retention.dropAfter, `${where} retention.dropAfter`)
+  const dropCreatedBefore = retention.dropCreatedBefore === undefined
+    ? null
+    : normalizeInterval(retention.dropCreatedBefore, `${where} retention.dropCreatedBefore`)
+  if ((dropAfter === null) === (dropCreatedBefore === null)) {
+    throw new PgExtrasError(
+      `${where} retention requires exactly one of dropAfter or dropCreatedBefore, such as "6 months" or "1 year"`,
+    )
   }
   return {
-    dropAfter: normalizeInterval(retention.dropAfter, `${where} retention.dropAfter`),
-    scheduleInterval: retention.scheduleInterval === undefined
-      ? null
-      : normalizeInterval(retention.scheduleInterval, `${where} retention.scheduleInterval`),
+    dropAfter,
+    dropCreatedBefore,
+    ...readPolicyTiming(retention, `${where} retention`),
   }
 }
 
-function readCompressionPolicy(
-  policy: { compressAfter: string; scheduleInterval?: string },
+function readColumnstorePolicy(
+  policy: { after?: string; createdBefore?: string } & PolicyTiming,
   where: string,
-): HypertableCompressionPolicy {
-  if (policy.compressAfter === undefined) {
-    throw new PgExtrasError(`${where} compressionPolicy requires compressAfter, such as "7 days"`)
+): HypertableColumnstorePolicy {
+  const after = policy.after === undefined ? null : normalizeInterval(policy.after, `${where} columnstorePolicy.after`)
+  const createdBefore = policy.createdBefore === undefined
+    ? null
+    : normalizeInterval(policy.createdBefore, `${where} columnstorePolicy.createdBefore`)
+  if ((after === null) === (createdBefore === null)) {
+    throw new PgExtrasError(
+      `${where} columnstorePolicy requires exactly one of after or createdBefore, such as "7 days" or "1 year"`,
+    )
   }
   return {
-    compressAfter: normalizeInterval(policy.compressAfter, `${where} compressionPolicy.compressAfter`),
-    scheduleInterval: policy.scheduleInterval === undefined
-      ? null
-      : normalizeInterval(policy.scheduleInterval, `${where} compressionPolicy.scheduleInterval`),
+    after,
+    createdBefore,
+    ...readPolicyTiming(policy, `${where} columnstorePolicy`),
   }
+}
+
+function readPolicyTiming(timing: PolicyTiming, where: string): {
+  scheduleInterval: string | null
+  initialStart: string | null
+  timezone: string | null
+} {
+  return {
+    scheduleInterval: timing.scheduleInterval === undefined
+      ? null
+      : normalizeInterval(timing.scheduleInterval, `${where}.scheduleInterval`),
+    initialStart: timing.initialStart === undefined
+      ? null
+      : normalizeTimestamp(timing.initialStart, `${where}.initialStart`),
+    timezone: timing.timezone === undefined ? null : normalizeTimezone(timing.timezone, `${where}.timezone`),
+  }
+}
+
+function normalizeTimestamp(value: string, where: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new PgExtrasError(`${where} must be a timestamp such as "2024-01-01T00:00:00Z"`)
+  }
+  return value.trim()
+}
+
+function normalizeTimezone(value: string, where: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new PgExtrasError(`${where} must be a timezone name such as "UTC"`)
+  }
+  return value.trim()
 }
 
 function resolveHypertableColumn(

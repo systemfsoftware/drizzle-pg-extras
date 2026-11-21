@@ -27,16 +27,16 @@ import {
   dropTriggerSql,
 } from './statements.js'
 import {
-  addCompressionPolicySql,
+  addColumnstorePolicySql,
   addHypertableDimensionSql,
   addRetentionPolicySql,
   createHypertableStatements,
-  disableHypertableCompressionSql,
-  enableHypertableCompressionSql,
+  disableHypertableColumnstoreSql,
+  enableHypertableColumnstoreSql,
   leaveChunkIntervalSql,
   leaveHypertableDimensionSql,
   leaveHypertableSql,
-  removeCompressionPolicySql,
+  removeColumnstorePolicySql,
   removeRetentionPolicySql,
   setChunkTimeIntervalSql,
 } from './timescale-sql.js'
@@ -306,9 +306,9 @@ function hypertableChanges(from: Snapshot, to: Snapshot, forward: boolean): stri
 
 function undoHypertable(ht: HypertableSnapshot): string[] {
   const statements: string[] = []
-  if (ht.compressionPolicy) statements.push(removeCompressionPolicySql(ht))
+  if (ht.columnstorePolicy) statements.push(removeColumnstorePolicySql(ht))
   if (ht.retention) statements.push(removeRetentionPolicySql(ht))
-  if (ht.compression) statements.push(disableHypertableCompressionSql(ht))
+  if (ht.columnstore) statements.push(disableHypertableColumnstoreSql(ht))
   statements.push(leaveHypertableSql(ht))
   return statements
 }
@@ -345,15 +345,18 @@ function alterHypertable(prev: HypertableSnapshot, next: HypertableSnapshot, for
       statements.push(setChunkTimeIntervalSql(next))
     }
   }
-  const compressionChanged = JSON.stringify(prev.compression) !== JSON.stringify(next.compression)
-  const compressionPolicyChanged = JSON.stringify(prev.compressionPolicy) !== JSON.stringify(next.compressionPolicy)
+  const columnstoreChanged = JSON.stringify(prev.columnstore) !== JSON.stringify(next.columnstore)
+  const columnstorePolicyChanged = JSON.stringify(prev.columnstorePolicy) !== JSON.stringify(next.columnstorePolicy)
   const retentionChanged = JSON.stringify(prev.retention) !== JSON.stringify(next.retention)
-  if (compressionPolicyChanged && prev.compressionPolicy) statements.push(removeCompressionPolicySql(prev))
-  if (compressionChanged) {
-    if (next.compression) statements.push(enableHypertableCompressionSql(next, next.compression, prev.compression))
-    else statements.push(disableHypertableCompressionSql(next))
+  if (columnstorePolicyChanged && prev.columnstorePolicy) statements.push(removeColumnstorePolicySql(prev))
+  if (columnstoreChanged) {
+    if (next.columnstore) {
+      statements.push(enableHypertableColumnstoreSql(next, next.columnstore, prev.columnstore))
+    } else {
+      statements.push(disableHypertableColumnstoreSql(next))
+    }
   }
-  if (compressionPolicyChanged && next.compressionPolicy) statements.push(addCompressionPolicySql(next))
+  if (columnstorePolicyChanged && next.columnstorePolicy) statements.push(addColumnstorePolicySql(next))
   if (retentionChanged && prev.retention) statements.push(removeRetentionPolicySql(prev))
   if (retentionChanged && next.retention) statements.push(addRetentionPolicySql(next))
   return statements

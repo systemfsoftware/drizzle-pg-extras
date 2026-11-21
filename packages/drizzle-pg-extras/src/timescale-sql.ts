@@ -1,28 +1,32 @@
 import { PgExtrasError } from './errors.js'
 import { qualify, quoteIdent, quoteLiteral } from './quote.js'
-import type { HypertableCompressionSnapshot, HypertableSnapshot } from './snapshot.js'
+import type {
+  HypertableColumnstorePolicySnapshot,
+  HypertableColumnstoreSnapshot,
+  HypertableRetentionSnapshot,
+  HypertableSnapshot,
+} from './snapshot.js'
 
 export function createHypertableStatements(ht: HypertableSnapshot): string[] {
   const statements = [createHypertableSql(ht)]
-  if (ht.compression) statements.push(enableHypertableCompressionSql(ht, ht.compression, null))
-  if (ht.compressionPolicy) statements.push(addCompressionPolicySql(ht))
+  if (ht.partitioningColumn) statements.push(addHypertableDimensionSql(ht))
+  if (ht.columnstore) statements.push(enableHypertableColumnstoreSql(ht, ht.columnstore, null))
+  if (ht.columnstorePolicy) statements.push(addColumnstorePolicySql(ht))
   if (ht.retention) statements.push(addRetentionPolicySql(ht))
   return statements
 }
 
 export function createHypertableSql(ht: HypertableSnapshot): string {
-  const args = [relation(ht), nameLiteral(ht.timeColumn)]
-  if (ht.partitioningColumn) {
-    args.push(`partitioning_column => ${nameLiteral(ht.partitioningColumn)}`)
-    args.push(`number_partitions => ${ht.numberPartitions}`)
-  }
-  if (ht.chunkTimeInterval) args.push(`chunk_time_interval => ${intervalLiteral(ht.chunkTimeInterval)}`)
+  const range = ht.chunkTimeInterval
+    ? `by_range(${nameLiteral(ht.timeColumn)}, partition_interval => ${intervalLiteral(ht.chunkTimeInterval)})`
+    : `by_range(${nameLiteral(ht.timeColumn)})`
+  const args = [relation(ht), range]
+  if (!ht.createDefaultIndexes) args.push('create_default_indexes => FALSE')
   if (ht.migrateData) args.push('migrate_data => TRUE')
   args.push('if_not_exists => TRUE')
-  const space = ht.partitioningColumn ? ` and ${quoteIdent(ht.partitioningColumn)}` : ''
   return `-- Convert ${qualify(ht.schema, ht.name)} into a TimescaleDB hypertable on ${
     quoteIdent(ht.timeColumn)
-  }${space}.\nSELECT create_hypertable(${args.join(', ')});`
+  } using by_range.\nSELECT create_hypertable(${args.join(', ')});`
 }
 
 export function setChunkTimeIntervalSql(ht: HypertableSnapshot): string {
@@ -36,51 +40,51 @@ export function setChunkTimeIntervalSql(ht: HypertableSnapshot): string {
 export function addHypertableDimensionSql(ht: HypertableSnapshot): string {
   return `-- Add a space partition on ${quoteIdent(ht.partitioningColumn ?? '')} to ${
     qualify(ht.schema, ht.name)
-  }.\nSELECT add_dimension(${relation(ht)}, ${
+  }.\nSELECT add_dimension(${relation(ht)}, by_hash(${
     nameLiteral(ht.partitioningColumn ?? '')
-  }, number_partitions => ${ht.numberPartitions}, if_not_exists => TRUE);`
+  }, ${ht.numberPartitions}), if_not_exists => TRUE);`
 }
 
-export function enableHypertableCompressionSql(
+export function enableHypertableColumnstoreSql(
   ht: Pick<HypertableSnapshot, 'schema' | 'name'>,
-  compression: HypertableCompressionSnapshot,
-  previous: HypertableCompressionSnapshot | null,
+  columnstore: HypertableColumnstoreSnapshot,
+  previous: HypertableColumnstoreSnapshot | null,
 ): string {
-  const options = ['timescaledb.compress']
-  const segment = compression.segmentBy.map((column) => quoteIdent(column)).join(', ')
+  const options = ['timescaledb.enable_columnstore']
+  const segment = columnstore.segmentBy.map((column) => quoteIdent(column)).join(', ')
   if (segment.length > 0 || (previous?.segmentBy.length ?? 0) > 0) {
-    options.push(`timescaledb.compress_segmentby = ${quoteLiteral(segment)}`)
+    options.push(`timescaledb.segmentby = ${quoteLiteral(segment)}`)
   }
-  const order = compression.orderBy.map(orderFragment).join(', ')
+  const order = columnstore.orderBy.map(orderFragment).join(', ')
   if (order.length > 0 || (previous?.orderBy.length ?? 0) > 0) {
-    options.push(`timescaledb.compress_orderby = ${quoteLiteral(order)}`)
+    options.push(`timescaledb.orderby = ${quoteLiteral(order)}`)
   }
-  return `-- Enable compression on ${qualify(ht.schema, ht.name)}.\nALTER TABLE ${
+  return `-- Enable the columnstore on ${qualify(ht.schema, ht.name)}.\nALTER TABLE ${
     qualify(ht.schema, ht.name)
   } SET (\n  ${options.join(',\n  ')}\n);`
 }
 
-export function disableHypertableCompressionSql(ht: Pick<HypertableSnapshot, 'schema' | 'name'>): string {
-  return `-- Turn compression off on ${
+export function disableHypertableColumnstoreSql(ht: Pick<HypertableSnapshot, 'schema' | 'name'>): string {
+  return `-- Turn the columnstore off on ${
     qualify(ht.schema, ht.name)
-  }. TimescaleDB refuses while any chunk is compressed, so decompress them first. The table lock keeps a concurrent compress_chunk from undoing that before the ALTER.\nDO $drizzle_pg_extras$\nBEGIN\n  LOCK TABLE ${
+  }. TimescaleDB refuses while any chunk is in the columnstore, so convert those chunks back to the rowstore first. The table lock keeps a concurrent conversion from undoing that before the ALTER.\nDO $drizzle_pg_extras$\nDECLARE\n  chunk regclass;\nBEGIN\n  LOCK TABLE ${
     qualify(ht.schema, ht.name)
-  } IN ACCESS EXCLUSIVE MODE;\n  PERFORM decompress_chunk(chunk, if_compressed => TRUE) FROM show_chunks(${
+  } IN ACCESS EXCLUSIVE MODE;\n  FOR chunk IN SELECT show_chunks(${
     relation(ht)
-  }) AS chunk;\n  ALTER TABLE ${
+  }) LOOP\n    CALL convert_to_rowstore(chunk, if_columnstore => TRUE);\n  END LOOP;\n  ALTER TABLE ${
     qualify(ht.schema, ht.name)
-  } SET (timescaledb.compress = false);\nEND\n$drizzle_pg_extras$;`
+  } SET (timescaledb.enable_columnstore = false);\nEND\n$drizzle_pg_extras$;`
 }
 
 export function addRetentionPolicySql(ht: HypertableSnapshot): string {
   const policy = ht.retention
   if (!policy) throw new PgExtrasError('addRetentionPolicySql requires a retention policy')
-  return policySql(
+  return policyStatement(
     'Add a retention policy to',
     'add_retention_policy',
     ht,
-    `drop_after => ${intervalLiteral(policy.dropAfter)}`,
-    policy.scheduleInterval,
+    retentionArgs(policy),
+    false,
   )
 }
 
@@ -90,20 +94,20 @@ export function removeRetentionPolicySql(ht: Pick<HypertableSnapshot, 'schema' |
   }, if_exists => TRUE);`
 }
 
-export function addCompressionPolicySql(ht: HypertableSnapshot): string {
-  const policy = ht.compressionPolicy
-  if (!policy) throw new PgExtrasError('addCompressionPolicySql requires a compression policy')
-  return policySql(
-    'Add a compression policy to',
-    'add_compression_policy',
+export function addColumnstorePolicySql(ht: HypertableSnapshot): string {
+  const policy = ht.columnstorePolicy
+  if (!policy) throw new PgExtrasError('addColumnstorePolicySql requires a columnstore policy')
+  return policyStatement(
+    'Add a columnstore policy to',
+    'add_columnstore_policy',
     ht,
-    `compress_after => ${intervalLiteral(policy.compressAfter)}`,
-    policy.scheduleInterval,
+    columnstorePolicyArgs(policy),
+    true,
   )
 }
 
-export function removeCompressionPolicySql(ht: Pick<HypertableSnapshot, 'schema' | 'name'>): string {
-  return `-- Remove the compression policy from ${qualify(ht.schema, ht.name)}.\nSELECT remove_compression_policy(${
+export function removeColumnstorePolicySql(ht: Pick<HypertableSnapshot, 'schema' | 'name'>): string {
+  return `-- Remove the columnstore policy from ${qualify(ht.schema, ht.name)}.\nCALL remove_columnstore_policy(${
     relation(ht)
   }, if_exists => TRUE);`
 }
@@ -132,17 +136,46 @@ export function leaveHypertableSql(ht: Pick<HypertableSnapshot, 'schema' | 'name
   }, ${quoteLiteral(ht.name)};\nEND\n$drizzle_pg_extras$;`
 }
 
-function policySql(
+function retentionArgs(policy: HypertableRetentionSnapshot): string[] {
+  const args = [
+    policy.dropAfter !== null
+      ? `drop_after => ${intervalLiteral(policy.dropAfter)}`
+      : `drop_created_before => ${intervalLiteral(policy.dropCreatedBefore ?? '')}`,
+  ]
+  timingArgs(policy, args)
+  return args
+}
+
+function columnstorePolicyArgs(policy: HypertableColumnstorePolicySnapshot): string[] {
+  const args = [
+    policy.after !== null
+      ? `after => ${intervalLiteral(policy.after)}`
+      : `created_before => ${intervalLiteral(policy.createdBefore ?? '')}`,
+  ]
+  timingArgs(policy, args)
+  return args
+}
+
+function timingArgs(
+  policy: { scheduleInterval: string | null; initialStart: string | null; timezone: string | null },
+  args: string[],
+): void {
+  if (policy.scheduleInterval) args.push(`schedule_interval => ${intervalLiteral(policy.scheduleInterval)}`)
+  if (policy.initialStart) args.push(`initial_start => ${timestampLiteral(policy.initialStart)}`)
+  if (policy.timezone) args.push(`timezone => ${quoteLiteral(policy.timezone)}`)
+}
+
+function policyStatement(
   comment: string,
   fn: string,
   ht: Pick<HypertableSnapshot, 'schema' | 'name'>,
-  age: string,
-  scheduleInterval: string | null,
+  args: string[],
+  procedure: boolean,
 ): string {
-  const schedule = scheduleInterval ? `, schedule_interval => ${intervalLiteral(scheduleInterval)}` : ''
-  return `-- ${comment} ${qualify(ht.schema, ht.name)}.\nSELECT ${fn}(${
-    relation(ht)
-  }, ${age}${schedule}, if_not_exists => TRUE);`
+  const call = procedure ? 'CALL' : 'SELECT'
+  return `-- ${comment} ${qualify(ht.schema, ht.name)}.\n${call} ${fn}(${
+    [relation(ht), ...args, 'if_not_exists => TRUE'].join(', ')
+  });`
 }
 
 function relation(ht: Pick<HypertableSnapshot, 'schema' | 'name'>): string {
@@ -157,7 +190,11 @@ function intervalLiteral(value: string): string {
   return `INTERVAL ${quoteLiteral(value)}`
 }
 
-function orderFragment(order: HypertableCompressionSnapshot['orderBy'][number]): string {
+function timestampLiteral(value: string): string {
+  return `${quoteLiteral(value)}::timestamptz`
+}
+
+function orderFragment(order: HypertableColumnstoreSnapshot['orderBy'][number]): string {
   const parts = [quoteIdent(order.column)]
   if (order.direction) parts.push(order.direction.toUpperCase())
   if (order.nulls) parts.push(`NULLS ${order.nulls.toUpperCase()}`)
