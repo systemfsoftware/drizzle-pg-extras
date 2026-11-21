@@ -1,14 +1,15 @@
 name: CI
 
-# One static-checks job and the service-backed test jobs per push and pull request, then `checks / check`, the one
-# aggregate check the Mergify queue gates on. The static checks run once on the frozen lockfile; commitlint lints the
-# pull request's title and body, which is what the squash message carries. A newer push to a pull request cancels its
-# older run; main and Mergify queue drafts never cancel.
+# One full gate per tree. A pull request runs it on its head; a Mergify queue draft runs it on the merged tree and is
+# the binding result, because the ruleset's required check is injected on the queue branch. A long-lived branch that
+# is not a pull request runs nothing, and a push to main runs it once for the commit that landed. Commit linting of
+# the squashed message lives in `squash-message.yml`, so a title or body edit never re-runs this gate.
+# A newer push to a pull request cancels its older run; main and Mergify queue drafts never cancel.
 on:
   push:
+    branches: [main]
   pull_request:
-    # `edited` re-runs the squash-message lint when the title or body changes without a push.
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
@@ -35,8 +36,15 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: pnpm
+      - id: pnpm-store
+        uses: ./.github/actions/pnpm-store
       - run: pnpm install --frozen-lockfile
+      # Only this job, and only on a push to main, writes the pnpm store; every other run restores it read-only.
+      - if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.pnpm-store.outputs.hit != 'true'
+        uses: ./.github/actions/pnpm-store
+        with:
+          mode: save
+          key: ${{ steps.pnpm-store.outputs.key }}
       - run: pnpm format:check
       - run: pnpm lint
       - run: pnpm typecheck
@@ -44,17 +52,6 @@ jobs:
       - run: pnpm build
       - run: pnpm --filter @systemfsoftware/drizzle-pg-extras exec attw --pack .
       - run: pnpm --filter @systemfsoftware/drizzle-pg-extras exec publint
-      # A Mergify queue draft is a pull request titled "merge queue: ...", which commitlint rejects; the pull request
-      # itself is still linted.
-      - if: github.event_name == 'pull_request' && !startsWith(github.head_ref, 'mergify/merge-queue/')
-        name: Lint the squash message
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title }}
-          PR_BODY: ${{ github.event.pull_request.body }}
-        run: |
-          title=${PR_TITLE//$'\r'/}
-          body=${PR_BODY//$'\r'/}
-          printf '%s\n\n%s' "$title" "$body" | pnpm exec commitlint --verbose
 
   changeset:
     name: change intent
@@ -94,7 +91,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ matrix.node }}
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
         env:
@@ -126,7 +123,7 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       # The rc install mutates this job's own dependency tree only (KTD3); this job runs tests only,
       # so the mutation never feeds a static check — those run once, on the frozen lockfile.
       - run: pnpm install --frozen-lockfile && pnpm add -D --filter @systemfsoftware/drizzle-pg-extras drizzle-orm@1.0.0-rc.5 drizzle-kit@1.0.0-rc.5
@@ -160,14 +157,16 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
-          cache: pnpm
+      - uses: ./.github/actions/pnpm-store
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
         env:
           TIMESCALE_URL: postgres://extras:extras@localhost:5432/drizzle_pg_extras
 
-  # The one check the Mergify queue gates on; the name matches the shared CI of the other systemfsoftware repositories.
-  # List every other job in `needs`: a job left out is not gated.
+  # The one check the ruleset requires and the Mergify queue gates on; the name matches the shared CI of the other
+  # systemfsoftware repositories. List every other job in `needs`: a job left out is not gated. The job always runs,
+  # and any dependency that did not conclude `success` — skipped, cancelled or failed — fails it, so a run that did
+  # not execute the gate can never stand in for one that passed.
   check:
     name: checks / check
     runs-on: ubuntu-latest
