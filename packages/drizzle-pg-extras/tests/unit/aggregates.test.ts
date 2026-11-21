@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm'
-import { integer, pgMaterializedView, pgTable, primaryKey, text, timestamp } from 'drizzle-orm/pg-core'
+import { integer, pgMaterializedView, pgTable, pgView, primaryKey, text, timestamp } from 'drizzle-orm/pg-core'
 import { describe, expect, it } from 'vitest'
 import {
   collectExtras,
@@ -24,7 +24,7 @@ function metricsTable() {
 }
 
 function viewOf(name: string) {
-  return pgMaterializedView(name, { value: integer() }).existing()
+  return pgView(name, { value: integer() }).existing()
 }
 
 function setup() {
@@ -33,7 +33,7 @@ function setup() {
   const hourlyView = viewOf('metrics_hourly')
   const hourly = continuousAggregate(hourlyView, {
     query: `SELECT time_bucket('1 hour', time) AS bucket, device_id, avg(value) AS value
-FROM metrics GROUP BY bucket, device_id`,
+FROM metrics GROUP BY time_bucket('1 hour', time), device_id`,
     source: ht,
     chunkInterval: '1 hour',
   })
@@ -60,9 +60,9 @@ describe('continuous aggregates', () => {
     const up = diff.up.join('\n')
     expect(up).toContain('CREATE MATERIALIZED VIEW IF NOT EXISTS "public"."metrics_hourly"')
     expect(up).toContain('timescaledb.continuous')
-    expect(up).toContain("timescaledb.chunk_interval = INTERVAL '1 hour'")
+    expect(up).toContain("timescaledb.chunk_interval = '1 hour'")
     expect(up).toContain('WITH NO DATA')
-    expect(up).toContain('FROM metrics GROUP BY bucket, device_id')
+    expect(up).toContain("FROM metrics GROUP BY time_bucket('1 hour', time), device_id")
     expect(diff.down.join('\n')).toContain('DROP MATERIALIZED VIEW IF EXISTS "public"."metrics_hourly"')
     expect(diffSnapshots(snapshotExtras(extras([hourly], table, ht)), snapshotExtras(extras([hourly], table, ht))).up)
       .toEqual([])
@@ -81,7 +81,7 @@ describe('continuous aggregates', () => {
     })
     const up = diffSnapshots(emptySnapshot(), snapshotExtras(extras([daily], table, ht))).up.join('\n')
     expect(up).toContain('timescaledb.materialized_only = true')
-    expect(up).toContain("timescaledb.chunk_interval = INTERVAL '2 days'")
+    expect(up).toContain("timescaledb.chunk_interval = '2 days'")
     expect(up).toContain('timescaledb.create_group_indexes = false')
     expect(renderIdempotent(extras([daily], table, ht))).toContain('CREATE MATERIALIZED VIEW IF NOT EXISTS')
   })
@@ -91,7 +91,7 @@ describe('continuous aggregates', () => {
     const before = snapshotExtras(extras([hourly], table, ht))
     const realTime = continuousAggregate(viewOf('metrics_hourly'), {
       query: `SELECT time_bucket('1 hour', time) AS bucket, device_id, avg(value) AS value
-FROM metrics GROUP BY bucket, device_id`,
+FROM metrics GROUP BY time_bucket('1 hour', time), device_id`,
       source: ht,
       chunkInterval: '1 hour',
       realTime: false,
@@ -109,7 +109,7 @@ FROM metrics GROUP BY bucket, device_id`,
     const before = snapshotExtras(extras([hourly], table, ht))
     const rebuilt = continuousAggregate(viewOf('metrics_hourly'), {
       query: `SELECT time_bucket('1 hour', time) AS bucket, device_id, max(value) AS value
-FROM metrics GROUP BY bucket, device_id`,
+FROM metrics GROUP BY time_bucket('1 hour', time), device_id`,
       source: ht,
       chunkInterval: '1 hour',
     })
@@ -152,10 +152,10 @@ FROM metrics GROUP BY bucket, device_id`,
     const before = snapshotExtras(extras([hourly], table, ht))
     const changed = continuousAggregate(view, { query: 'SELECT 2 AS value', source: ht })
     const up = diffSnapshots(before, snapshotExtras(extras([changed], table, ht))).up.join('\n')
-    expect(up).toContain(`COMMENT ON MATERIALIZED VIEW "public"."metrics_hourly" IS 'Hourly metrics'`)
+    expect(up).toContain(`COMMENT ON VIEW "public"."metrics_hourly" IS 'Hourly metrics'`)
     const drop = diffSnapshots(before, snapshotExtras(extras([], table, ht))).up.join('\n')
     expect(drop).toContain('DROP MATERIALIZED VIEW IF EXISTS "public"."metrics_hourly"')
-    expect(drop).not.toContain('COMMENT ON MATERIALIZED VIEW "public"."metrics_hourly" IS NULL')
+    expect(drop).not.toContain('COMMENT ON VIEW "public"."metrics_hourly" IS NULL')
   })
 
   it('refuses a source table removed with its aggregate', () => {
