@@ -59,6 +59,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "f=${OXLINT_FORMAT:-${AGENT:+agent}}; effect-tsgo oxlint . --type-aware --format=${f:-default}",
     "test": "vitest run",
+    "prepare": "pnpm run build",
     "prepublishOnly": "pnpm run build"
   },
   "peerDependencies": {
