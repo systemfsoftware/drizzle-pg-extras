@@ -224,7 +224,9 @@ describe.skipIf(!url)('timescaledb continuous aggregates', () => {
       )
       expect(comment.rows[0]?.comment).toBe('Hourly metrics')
 
-      await client.query(`INSERT INTO metrics (time, device_id, value) VALUES (now(), 'a', 1), (now(), 'a', 3)`)
+      await client.query(
+        `INSERT INTO metrics (time, device_id, value) VALUES (now(), 'a', 1), (now() - INTERVAL '1 minute', 'a', 3)`,
+      )
       await client.query(`CALL refresh_continuous_aggregate('public.metrics_hourly', NULL, NULL)`)
       await client.query(`CALL refresh_continuous_aggregate('public.metrics_daily', NULL, NULL)`)
       const refreshed = await client.query<{ value: number }>(`SELECT value FROM metrics_hourly`)
