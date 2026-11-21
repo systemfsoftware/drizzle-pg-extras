@@ -231,9 +231,15 @@ export type HypertableOrderSpec = {
   nulls: 'first' | 'last' | null
 }
 
+export type HypertableSparseIndex = {
+  type: 'bloom' | 'minmax'
+  columns: readonly (AnyPgColumn | string)[]
+}
+
 export type HypertableColumnstore = {
   segmentBy: readonly (AnyPgColumn | string)[]
   orderBy: readonly HypertableOrderSpec[]
+  sparseIndex: readonly HypertableSparseIndex[]
 }
 
 export type HypertableRetention = {
@@ -268,6 +274,7 @@ export type Hypertable = {
   readonly columnstore: HypertableColumnstore | null
   readonly retention: HypertableRetention | null
   readonly columnstorePolicy: HypertableColumnstorePolicy | null
+  readonly reorder: string | null
 }
 
 export type ContinuousAggregateSource = Hypertable | ContinuousAggregate
@@ -1468,6 +1475,10 @@ type DrizzleHypertableConfig<TTable extends PgTable> = {
         nulls?: 'first' | 'last'
       }
     )[]
+    sparseIndex?: readonly {
+      type: 'bloom' | 'minmax'
+      columns: readonly TTable['_']['columns'][keyof TTable['_']['columns']][]
+    }[]
   }
   retention?: {
     dropAfter?: string
@@ -1483,6 +1494,7 @@ type DrizzleHypertableConfig<TTable extends PgTable> = {
     initialStart?: string
     timezone?: string
   }
+  reorder?: string
 }
 
 type NameHypertableConfig = {
@@ -1495,6 +1507,7 @@ type NameHypertableConfig = {
   columnstore?: {
     segmentBy?: readonly string[]
     orderBy?: readonly (string | { column: string; direction?: 'asc' | 'desc'; nulls?: 'first' | 'last' })[]
+    sparseIndex?: readonly { type: 'bloom' | 'minmax'; columns: readonly string[] }[]
   }
   retention?: {
     dropAfter?: string
@@ -1510,6 +1523,7 @@ type NameHypertableConfig = {
     initialStart?: string
     timezone?: string
   }
+  reorder?: string
 }
 
 /**
@@ -1595,6 +1609,7 @@ export function hypertable(
       columnstore: config.columnstore ? readColumnstore(drizzleTable, config.columnstore, where) : null,
       retention: config.retention ? readRetention(config.retention, where) : null,
       columnstorePolicy: config.columnstorePolicy ? readColumnstorePolicy(config.columnstorePolicy, where) : null,
+      reorder: config.reorder === undefined ? null : readReorderIndex(config.reorder, where),
     },
     'hypertable',
   )
@@ -1774,7 +1789,11 @@ function continuousAggregateIdentity(
 
 function readColumnstore(
   table: PgTable | null,
-  columnstore: { segmentBy?: readonly (AnyPgColumn | string)[]; orderBy?: readonly HypertableOrderInput[] },
+  columnstore: {
+    segmentBy?: readonly (AnyPgColumn | string)[]
+    orderBy?: readonly HypertableOrderInput[]
+    sparseIndex?: readonly { type: 'bloom' | 'minmax'; columns: readonly (AnyPgColumn | string)[] }[]
+  },
   where: string,
 ): HypertableColumnstore {
   const segmentBy = (columnstore.segmentBy ?? []).map((column, index) =>
@@ -1788,7 +1807,49 @@ function readColumnstore(
     orderBy.map((entry) => entry.column),
     `${where} columnstore.orderBy`,
   )
-  return { segmentBy, orderBy }
+  const sparseIndex = (columnstore.sparseIndex ?? []).map((entry, index) => {
+    const at = `${where} columnstore.sparseIndex[${index}]`
+    if (entry.type !== 'bloom' && entry.type !== 'minmax') {
+      throw new PgExtrasError(`${at}.type must be "bloom" or "minmax"`)
+    }
+    const columns = entry.columns.map((column, columnIndex) =>
+      resolveHypertableColumn(table, column, `${at}.columns[${columnIndex}]`)
+    )
+    assertDistinctColumns(columns, `${at}.columns`)
+    if (columns.length === 0) throw new PgExtrasError(`${at}.columns is empty`)
+    return { type: entry.type, columns }
+  })
+  if (sparseIndex.length > 0 && orderBy.length === 0) {
+    throw new PgExtrasError(`${where}: a sparse index requires columnstore.orderBy`)
+  }
+  const segmentKeys = new Set(segmentBy.map(columnKey))
+  const orderKeys = new Set(orderBy.map((entry) => columnKey(entry.column)))
+  const singleBloom = new Set<string>()
+  for (const index of sparseIndex) {
+    const keys = index.columns.map(columnKey)
+    for (const key of keys) {
+      if (segmentKeys.has(key)) throw new PgExtrasError(`${where}: sparse index cannot use segmentBy column "${key}"`)
+    }
+    if (index.type === 'bloom' && keys.length === 1) {
+      const key = keys[0]!
+      if (orderKeys.has(key)) {
+        throw new PgExtrasError(`${where}: a single-column bloom index cannot use orderBy column "${key}"`)
+      }
+      if (singleBloom.has(key)) {
+        throw new PgExtrasError(`${where}: column "${key}" has more than one single-column bloom index`)
+      }
+      singleBloom.add(key)
+    }
+  }
+  return { segmentBy, orderBy, sparseIndex }
+}
+
+function readReorderIndex(value: string, where: string): string {
+  if (typeof value !== 'string' || value.trim().length === 0) {
+    throw new PgExtrasError(`${where}: reorder must name an index such as "metrics_time_idx"`)
+  }
+  assertIdentifier('reorder index', value)
+  return value
 }
 
 function readOrder(table: PgTable | null, entry: HypertableOrderInput, where: string): HypertableOrderSpec {

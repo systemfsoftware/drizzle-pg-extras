@@ -359,6 +359,7 @@ export const metricsHypertable = hypertable(metrics, {
   columnstore: {
     segmentBy: [metrics.deviceId],
     orderBy: [{ column: metrics.time, direction: "${direction}" }],
+    sparseIndex: [{ type: "bloom", columns: [metrics.value] }],
   },
   retention: { dropAfter: "${dropAfter}", scheduleInterval: "1 day" },
   columnstorePolicy: { after: "7 days" },

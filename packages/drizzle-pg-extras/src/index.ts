@@ -15,6 +15,7 @@ export {
   type HypertableColumnstorePolicy,
   type HypertableOrderSpec,
   type HypertableRetention,
+  type HypertableSparseIndex,
   type PartitionBound,
   type PartitionBoundSpec,
   type PartitionedTable,
@@ -110,6 +111,7 @@ export {
   addContinuousAggregateRefreshPoliciesSql,
   addContinuousAggregateRetentionPolicySql,
   addHypertableDimensionSql,
+  addReorderPolicySql,
   addRetentionPolicySql,
   alterContinuousAggregateChunkIntervalSql,
   alterContinuousAggregateRealTimeSql,
@@ -129,6 +131,7 @@ export {
   removeContinuousAggregatePolicies,
   removeContinuousAggregateRefreshPolicySql,
   removeContinuousAggregateRetentionPolicySql,
+  removeReorderPolicySql,
   removeRetentionPolicySql,
   setChunkTimeIntervalSql,
 } from './timescale-sql.js'

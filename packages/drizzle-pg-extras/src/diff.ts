@@ -33,6 +33,7 @@ import {
   addContinuousAggregateRefreshPoliciesSql,
   addContinuousAggregateRetentionPolicySql,
   addHypertableDimensionSql,
+  addReorderPolicySql,
   addRetentionPolicySql,
   alterContinuousAggregateChunkIntervalSql,
   alterContinuousAggregateRealTimeSql,
@@ -51,6 +52,7 @@ import {
   removeContinuousAggregatePolicies,
   removeContinuousAggregateRefreshPolicySql,
   removeContinuousAggregateRetentionPolicySql,
+  removeReorderPolicySql,
   removeRetentionPolicySql,
   setChunkTimeIntervalSql,
 } from './timescale-sql.js'
@@ -339,6 +341,7 @@ function hypertableChanges(from: Snapshot, to: Snapshot, forward: boolean): stri
 
 function undoHypertable(ht: HypertableSnapshot): string[] {
   const statements: string[] = []
+  if (ht.reorder) statements.push(removeReorderPolicySql(ht))
   if (ht.columnstorePolicy) statements.push(removeColumnstorePolicySql(ht))
   if (ht.retention) statements.push(removeRetentionPolicySql(ht))
   if (ht.columnstore) statements.push(disableHypertableColumnstoreSql(ht))
@@ -392,6 +395,10 @@ function alterHypertable(prev: HypertableSnapshot, next: HypertableSnapshot, for
   if (columnstorePolicyChanged && next.columnstorePolicy) statements.push(addColumnstorePolicySql(next))
   if (retentionChanged && prev.retention) statements.push(removeRetentionPolicySql(prev))
   if (retentionChanged && next.retention) statements.push(addRetentionPolicySql(next))
+  if (prev.reorder !== next.reorder) {
+    if (prev.reorder) statements.push(removeReorderPolicySql(prev))
+    if (next.reorder) statements.push(addReorderPolicySql(next))
+  }
   return statements
 }
 

@@ -404,6 +404,87 @@ describe('hypertable definition checks', () => {
     ).toThrow(/exactly one/)
   })
 
+  it('renders sparse indexes and a reorder policy', () => {
+    const metrics = metricsTable()
+    const sparse = snapshotExtras(defineExtras({
+      extensions: [pgExtension('timescaledb')],
+      hypertables: [hypertable(metrics, {
+        timeColumn: metrics.time,
+        columnstore: {
+          segmentBy: [metrics.deviceId],
+          orderBy: [metrics.time],
+          sparseIndex: [
+            { type: 'bloom', columns: [metrics.value] },
+            { type: 'minmax', columns: [metrics.time] },
+          ],
+        },
+        reorder: 'metrics_time_idx',
+      })],
+    }))
+    const up = diffSnapshots(emptySnapshot(), sparse).up.join('\n')
+    expect(up).toContain(`timescaledb.sparse_index = 'bloom("value"), minmax("time")'`)
+    expect(up).toContain(
+      `SELECT add_reorder_policy('"public"."metrics"'::regclass, 'metrics_time_idx'::name, if_not_exists => TRUE);`,
+    )
+    const renamed = snapshotExtras(defineExtras({
+      extensions: [pgExtension('timescaledb')],
+      hypertables: [hypertable(metrics, {
+        timeColumn: metrics.time,
+        columnstore: {
+          segmentBy: [metrics.deviceId],
+          orderBy: [metrics.time],
+          sparseIndex: [{ type: 'minmax', columns: [metrics.time] }],
+        },
+        reorder: 'metrics_other_idx',
+      })],
+    }))
+    const change = diffSnapshots(sparse, renamed).up.join('\n')
+    expect(change).toContain('remove_reorder_policy')
+    expect(change).toContain(`'metrics_other_idx'::name`)
+    expect(change.indexOf('remove_reorder_policy')).toBeLessThan(change.indexOf(`'metrics_other_idx'::name`))
+  })
+
+  it('rejects sparse indexes the server would reject', () => {
+    const metrics = metricsTable()
+    expect(() =>
+      hypertable(metrics, {
+        timeColumn: metrics.time,
+        columnstore: {
+          segmentBy: [metrics.deviceId],
+          orderBy: [metrics.time],
+          sparseIndex: [{ type: 'bloom', columns: [metrics.deviceId] }],
+        },
+      })
+    ).toThrow(/segmentBy/)
+    expect(() =>
+      hypertable(metrics, {
+        timeColumn: metrics.time,
+        columnstore: {
+          orderBy: [metrics.time],
+          sparseIndex: [{ type: 'bloom', columns: [metrics.time] }],
+        },
+      })
+    ).toThrow(/single-column bloom/)
+    expect(() =>
+      hypertable(metrics, {
+        timeColumn: metrics.time,
+        columnstore: {
+          orderBy: [metrics.time],
+          sparseIndex: [
+            { type: 'bloom', columns: [metrics.value] },
+            { type: 'bloom', columns: [metrics.value] },
+          ],
+        },
+      })
+    ).toThrow(/more than one/)
+    expect(() =>
+      hypertable(metrics, {
+        timeColumn: metrics.time,
+        columnstore: { sparseIndex: [{ type: 'bloom', columns: [metrics.value] }] },
+      })
+    ).toThrow(/requires columnstore.orderBy/)
+  })
+
   it('refuses to drop a hypertable, clear its interval, or change the time or space key', () => {
     const before = snapshotExtras(fullExtras())
     const kept = snapshotExtras(defineExtras({

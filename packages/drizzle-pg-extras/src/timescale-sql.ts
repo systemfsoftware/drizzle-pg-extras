@@ -14,6 +14,7 @@ export function createHypertableStatements(ht: HypertableSnapshot): string[] {
   if (ht.columnstore) statements.push(enableHypertableColumnstoreSql(ht, ht.columnstore, null))
   if (ht.columnstorePolicy) statements.push(addColumnstorePolicySql(ht))
   if (ht.retention) statements.push(addRetentionPolicySql(ht))
+  if (ht.reorder) statements.push(addReorderPolicySql(ht))
   return statements
 }
 
@@ -58,6 +59,10 @@ export function enableHypertableColumnstoreSql(
   if (order.length > 0 || (previous?.orderBy.length ?? 0) > 0) {
     options.push(`timescaledb.orderby = ${quoteLiteral(order)}`)
   }
+  const sparse = columnstore.sparseIndex
+    .map((index) => `${index.type}(${index.columns.map((column) => quoteIdent(column)).join(', ')})`)
+    .join(', ')
+  if (sparse.length > 0) options.push(`timescaledb.sparse_index = ${quoteLiteral(sparse)}`)
   return `-- Enable the columnstore on ${qualify(ht.schema, ht.name)}.\nALTER TABLE ${
     qualify(ht.schema, ht.name)
   } SET (\n  ${options.join(',\n  ')}\n);`
@@ -89,6 +94,19 @@ export function addRetentionPolicySql(ht: HypertableSnapshot): string {
 
 export function removeRetentionPolicySql(ht: Pick<HypertableSnapshot, 'schema' | 'name'>): string {
   return `-- Remove the retention policy from ${qualify(ht.schema, ht.name)}.\nSELECT remove_retention_policy(${
+    relation(ht)
+  }, if_exists => TRUE);`
+}
+
+export function addReorderPolicySql(ht: Pick<HypertableSnapshot, 'schema' | 'name' | 'reorder'>): string {
+  if (!ht.reorder) throw new PgExtrasError('addReorderPolicySql requires an index name')
+  return `-- Reorder the rowstore chunks of ${qualify(ht.schema, ht.name)} by ${
+    quoteIdent(ht.reorder)
+  }.\nSELECT add_reorder_policy(${relation(ht)}, ${nameLiteral(ht.reorder)}, if_not_exists => TRUE);`
+}
+
+export function removeReorderPolicySql(ht: Pick<HypertableSnapshot, 'schema' | 'name'>): string {
+  return `-- Remove the reorder policy from ${qualify(ht.schema, ht.name)}.\nSELECT remove_reorder_policy(${
     relation(ht)
   }, if_exists => TRUE);`
 }
