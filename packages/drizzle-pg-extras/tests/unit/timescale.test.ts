@@ -442,6 +442,17 @@ describe('hypertable definition checks', () => {
     expect(change).toContain('remove_reorder_policy')
     expect(change).toContain(`'metrics_other_idx'::name`)
     expect(change.indexOf('remove_reorder_policy')).toBeLessThan(change.indexOf(`'metrics_other_idx'::name`))
+
+    const cleared = snapshotExtras(defineExtras({
+      extensions: [pgExtension('timescaledb')],
+      hypertables: [hypertable(metrics, {
+        timeColumn: metrics.time,
+        columnstore: { segmentBy: [metrics.deviceId], orderBy: [metrics.time] },
+      })],
+    }))
+    const reset = diffSnapshots(sparse, cleared).up.join('\n')
+    expect(reset).toContain(`timescaledb.sparse_index = ''`)
+    expect(reset).not.toContain('minmax("time")')
   })
 
   it('rejects sparse indexes the server would reject', () => {

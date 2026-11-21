@@ -99,7 +99,7 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
 
       writeFileSync(
         path.join(dir, 'schema.ts'),
-        schemaSource(source, { chunk: '2 days', dropAfter: '3 months', direction: 'asc' }),
+        schemaSource(source, { chunk: '2 days', dropAfter: '3 months', direction: 'asc', reorder: true }),
       )
       process.chdir(dir)
       expect(await run(['generate', '--name', 'chunk_interval'])).toBe(0)
@@ -110,8 +110,14 @@ describe.skipIf(!url)('timescaledb hypertables', () => {
       expect(changedSql).toContain('set_chunk_time_interval')
       expect(changedSql).toContain("INTERVAL '2 days'")
       expect(changedSql).toContain("INTERVAL '3 months'")
+      expect(changedSql).toContain('add_reorder_policy')
       expect(changedSql).not.toContain('create_hypertable')
       await runStatements(client, changedSql)
+
+      const reorder = await client.query(
+        `SELECT 1 FROM timescaledb_information.jobs WHERE proc_name = 'policy_reorder' AND hypertable_name = 'metrics'`,
+      )
+      expect(reorder.rowCount).toBe(1)
 
       expect(await intervalEquals(client, 'public', 'metrics', 'time', '2 days')).toBe(true)
       expect(await policyInterval(client, 'metrics', 'policy_retention', 'drop_after', '3 months')).toBe(true)
@@ -335,7 +341,7 @@ function hypertableSql(migrateData: boolean): string {
 
 function schemaSource(
   sourcePath: string,
-  options?: { chunk?: string; dropAfter?: string; direction?: string },
+  options?: { chunk?: string; dropAfter?: string; direction?: string; reorder?: boolean },
 ): string {
   const chunk = options?.chunk ?? '1 day'
   const dropAfter = options?.dropAfter ?? '6 months'
@@ -365,6 +371,7 @@ export const metricsHypertable = hypertable(metrics, {
   },
   retention: { dropAfter: "${dropAfter}", scheduleInterval: "1 day" },
   columnstorePolicy: { after: "7 days" },
+  ${options?.reorder ? 'reorder: "metrics_time_idx",' : ''}
 });
 
 export const market = pgSchema("market");
