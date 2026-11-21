@@ -88,6 +88,7 @@ export {
   type HypertableOrderSnapshot,
   type HypertableRetentionSnapshot,
   type HypertableSnapshot,
+  type HypertableSparseIndexSnapshot,
   parseSnapshot,
   type PartitionedTableSnapshot,
   type PartitionSnapshot,
