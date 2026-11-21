@@ -1,12 +1,12 @@
 # drizzle-pg-extras
 
-Declare the Postgres objects Drizzle can't model yet, next to your Drizzle tables, and get ordinary SQL migration files for them: functions, triggers, comments, extensions, partitioned tables and TimescaleDB hypertables.
+Declare the Postgres objects Drizzle can't model yet, next to your Drizzle tables, and get ordinary SQL migration files for them: functions, triggers, comments, extensions, partitioned tables, and TimescaleDB hypertables and continuous aggregates.
 
 `drizzle-kit migrate` applies those files like any other migration. Nothing in Drizzle is patched, so if Drizzle later learns to generate one of these objects itself, the SQL you already committed stays valid.
 
 ## Example
 
-A TimescaleDB hypertable with compression and retention, declared in the same schema file as the table:
+A TimescaleDB hypertable with a columnstore and retention, declared in the same schema file as the table:
 
 ```ts
 import { hypertable, pgExtension } from '@systemfsoftware/drizzle-pg-extras'
@@ -23,8 +23,8 @@ export const metrics = pgTable('metrics', {
 export const metricsHypertable = hypertable(metrics, {
   timeColumn: metrics.time,
   chunkTimeInterval: '1 day',
-  compression: { segmentBy: [metrics.deviceId] },
-  compressionPolicy: { compressAfter: '7 days' },
+  columnstore: { segmentBy: [metrics.deviceId] },
+  columnstorePolicy: { after: '7 days' },
   retention: { dropAfter: '6 months' },
 })
 ```

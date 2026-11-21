@@ -190,9 +190,15 @@ export type HypertableOrderSnapshot = {
   nulls: 'first' | 'last' | null
 }
 
+export type HypertableSparseIndexSnapshot = {
+  type: 'bloom' | 'minmax'
+  columns: string[]
+}
+
 export type HypertableColumnstoreSnapshot = {
   segmentBy: string[]
   orderBy: HypertableOrderSnapshot[]
+  sparseIndex: HypertableSparseIndexSnapshot[]
 }
 
 export type HypertableRetentionSnapshot = {
@@ -226,6 +232,7 @@ export type HypertableSnapshot = {
   columnstore: HypertableColumnstoreSnapshot | null
   retention: HypertableRetentionSnapshot | null
   columnstorePolicy: HypertableColumnstorePolicySnapshot | null
+  reorder: string | null
 }
 
 export type ContinuousAggregateSourceSnapshot = {
@@ -829,6 +836,7 @@ function normalizeHypertableSnapshot(value: unknown): HypertableSnapshot {
     columnstore: normalizeColumnstoreSnapshot(raw.columnstore ?? raw.compression),
     retention: normalizeRetentionSnapshot(raw.retention),
     columnstorePolicy: normalizeColumnstorePolicySnapshot(raw.columnstorePolicy ?? raw.compressionPolicy),
+    reorder: nullableString(raw.reorder),
   }
 }
 
@@ -848,6 +856,19 @@ function normalizeColumnstoreSnapshot(value: unknown): HypertableColumnstoreSnap
           column: order.column,
           direction: order.direction === 'asc' || order.direction === 'desc' ? order.direction : null,
           nulls: order.nulls === 'first' || order.nulls === 'last' ? order.nulls : null,
+        }]
+      })
+      : [],
+    sparseIndex: Array.isArray(raw.sparseIndex)
+      ? raw.sparseIndex.flatMap((item) => {
+        if (!item || typeof item !== 'object') return []
+        const index = item as Record<string, unknown>
+        if (index.type !== 'bloom' && index.type !== 'minmax') return []
+        return [{
+          type: index.type,
+          columns: Array.isArray(index.columns)
+            ? index.columns.filter((column): column is string => typeof column === 'string')
+            : [],
         }]
       })
       : [],
@@ -1390,10 +1411,15 @@ function snapshotHypertable(hypertable: Hypertable, nameOf: (column: AnyPgColumn
           direction: order.direction,
           nulls: order.nulls,
         })),
+        sparseIndex: hypertable.columnstore.sparseIndex.map((index) => ({
+          type: index.type,
+          columns: index.columns.map(columnName),
+        })),
       }
       : null,
     retention: hypertable.retention ? { ...hypertable.retention } : null,
     columnstorePolicy: hypertable.columnstorePolicy ? { ...hypertable.columnstorePolicy } : null,
+    reorder: hypertable.reorder,
   }
 }
 
@@ -1425,6 +1451,7 @@ function snapshotContinuousAggregates(
             direction: order.direction,
             nulls: order.nulls,
           })),
+          sparseIndex: [],
         }
         : null,
       columnstorePolicy: aggregate.columnstorePolicy ? { ...aggregate.columnstorePolicy } : null,

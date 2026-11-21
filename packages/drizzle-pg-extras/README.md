@@ -145,22 +145,23 @@ generate({ extras, out: './drizzle', name: 'touch_updated_at' })
 console.log(renderIdempotent(extras))
 ```
 
-| Export                                            | Role                                                                                                                                                                                                                               |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pgFunction(name, config)`                        | `plpgsql` or `sql`. Args are `IN` only. `returns` is a SQL type string or a Drizzle column (`users.id`). `searchPath: []` emits `SET search_path TO ''`.                                                                           |
-| `pgTrigger(name, config)`                         | Table, `pgView()`, or `{ name, schema }`. `columns` is `UPDATE OF`. `when` is SQL or `` ({ OLD, NEW }) => sql`…` ``. `constraint`, `referencing`, and `enabled: false` are in [Triggers](#triggers).                               |
-| `updatedAtTrigger(table, column)`                 | `BEFORE UPDATE` trigger. `column` must be `date`, `time`, or `timestamp`. Tables that share a database column name share one function, `set_<column>`.                                                                             |
-| `pgExtension(name, { schema, version, cascade })` | `CREATE EXTENSION IF NOT EXISTS`, optionally `WITH SCHEMA` and `VERSION`.                                                                                                                                                          |
-| `withComment(target, text)`                       | Table, column builder, enum, finished view or materialized view, `pgFunction`, trigger, extension, or an index / `unique` / `check` / `primaryKey` / `foreignKey` builder. Returns the same object. Does not change Drizzle's SQL. |
-| `commentOn(target, text)`                         | Same `COMMENT ON` output for a table, column, enum, view, function, trigger, or extension you already hold. Indexes and constraints use `withComment` inside the table callback.                                                   |
-| `partitionedTable(table, { method, columns })`    | Marks a drizzle-kit table as `RANGE`, `LIST`, or `HASH`. The migration converts the empty table. See [Partitioning](#partitioning).                                                                                                |
-| `pgPartition(name, { parent, ...bounds })`        | `CREATE TABLE ... PARTITION OF`. Bounds are `from`/`to`, `in`, `modulus`/`remainder`, or `default: true`.                                                                                                                          |
-| `pgAttachPartition(table, { parent, ...bounds })` | `ALTER TABLE ... ATTACH PARTITION` for a table drizzle-kit already created.                                                                                                                                                        |
-| `pgDetachPartition(table, { parent })`            | `ALTER TABLE ... DETACH PARTITION`. The table is kept.                                                                                                                                                                             |
-| `hypertable(table, config)`                       | `create_hypertable` with `if_not_exists`, plus optional compression, a retention policy, and a compression policy. Requires `pgExtension("timescaledb")`. See [TimescaleDB](#timescaledb).                                         |
-| `defineExtras` / `collectExtras`                  | Bundle objects, or scan a module's exports (the CLI does the scan).                                                                                                                                                                |
-| `generate` / `diffSnapshots` / `snapshotExtras`   | Diff against the stored snapshot and write files.                                                                                                                                                                                  |
-| `renderIdempotent`                                | Create-or-replace script for everything currently declared. No drops.                                                                                                                                                              |
+| Export                                            | Role                                                                                                                                                                                                                                 |
+| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pgFunction(name, config)`                        | `plpgsql` or `sql`. Args are `IN` only. `returns` is a SQL type string or a Drizzle column (`users.id`). `searchPath: []` emits `SET search_path TO ''`.                                                                             |
+| `pgTrigger(name, config)`                         | Table, `pgView()`, or `{ name, schema }`. `columns` is `UPDATE OF`. `when` is SQL or `` ({ OLD, NEW }) => sql`…` ``. `constraint`, `referencing`, and `enabled: false` are in [Triggers](#triggers).                                 |
+| `updatedAtTrigger(table, column)`                 | `BEFORE UPDATE` trigger. `column` must be `date`, `time`, or `timestamp`. Tables that share a database column name share one function, `set_<column>`.                                                                               |
+| `pgExtension(name, { schema, version, cascade })` | `CREATE EXTENSION IF NOT EXISTS`, optionally `WITH SCHEMA` and `VERSION`.                                                                                                                                                            |
+| `withComment(target, text)`                       | Table, column builder, enum, finished view or materialized view, `pgFunction`, trigger, extension, or an index / `unique` / `check` / `primaryKey` / `foreignKey` builder. Returns the same object. Does not change Drizzle's SQL.   |
+| `commentOn(target, text)`                         | Same `COMMENT ON` output for a table, column, enum, view, function, trigger, or extension you already hold. Indexes and constraints use `withComment` inside the table callback.                                                     |
+| `partitionedTable(table, { method, columns })`    | Marks a drizzle-kit table as `RANGE`, `LIST`, or `HASH`. The migration converts the empty table. See [Partitioning](#partitioning).                                                                                                  |
+| `pgPartition(name, { parent, ...bounds })`        | `CREATE TABLE ... PARTITION OF`. Bounds are `from`/`to`, `in`, `modulus`/`remainder`, or `default: true`.                                                                                                                            |
+| `pgAttachPartition(table, { parent, ...bounds })` | `ALTER TABLE ... ATTACH PARTITION` for a table drizzle-kit already created.                                                                                                                                                          |
+| `pgDetachPartition(table, { parent })`            | `ALTER TABLE ... DETACH PARTITION`. The table is kept.                                                                                                                                                                               |
+| `hypertable(table, config)`                       | `create_hypertable` with `by_range` and `if_not_exists`, plus optional columnstore settings, a retention policy, a columnstore policy, and a reorder policy. Requires `pgExtension("timescaledb")`. See [TimescaleDB](#timescaledb). |
+| `continuousAggregate(view, config)`               | `CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous)` from your query, plus refresh, columnstore, and retention policies. See [Continuous aggregates](#continuous-aggregates).                                                |
+| `defineExtras` / `collectExtras`                  | Bundle objects, or scan a module's exports (the CLI does the scan).                                                                                                                                                                  |
+| `generate` / `diffSnapshots` / `snapshotExtras`   | Diff against the stored snapshot and write files.                                                                                                                                                                                    |
+| `renderIdempotent`                                | Create-or-replace script for everything currently declared. No drops.                                                                                                                                                                |
 
 `casing` from `drizzle.config.ts` is applied to key-named columns (`updatedAt` with `snake_case` becomes `updated_at`), same as drizzle-kit. Explicit database names are left alone.
 
@@ -356,9 +357,9 @@ The conversion copies columns, defaults, identity, indexes, checks, and column c
 
 ## TimescaleDB
 
-This is a community package. It is not an official Timescale or Tiger Data tool, and it is not part of Drizzle. Nobody at Timescale reviewed this SQL. It generates the calls people asked for on [drizzle-orm#2962](https://github.com/drizzle-team/drizzle-orm/issues/2962): turn a normal table into a hypertable, then optionally compress it and add retention and compression policies.
+This is a community package. It is not an official Timescale or Tiger Data tool, and it is not part of Drizzle. Nobody at Timescale reviewed this SQL. It generates the calls people asked for on [drizzle-orm#2962](https://github.com/drizzle-team/drizzle-orm/issues/2962): turn a normal table into a hypertable, then optionally use its columnstore and add retention, columnstore, and reorder policies. It also declares continuous aggregates over a hypertable or over another aggregate.
 
-The table stays in the Drizzle schema, so drizzle-kit still owns columns, indexes, and keys. `generate` appends `SELECT create_hypertable(..., if_not_exists => TRUE)`. That is the same shape as the custom migration in the issue thread. Timescale's newer `CREATE TABLE ... WITH (tsdb.hypertable)` has to be on the `CREATE TABLE` itself, and this package does not rewrite the file drizzle-kit already wrote.
+The table stays in the Drizzle schema, so drizzle-kit still owns columns, indexes, and keys. `generate` appends `SELECT create_hypertable(..., by_range(...), if_not_exists => TRUE)`. That is the same shape as the custom migration in the issue thread. Timescale's newer `CREATE TABLE ... WITH (tsdb.hypertable)` has to be on the `CREATE TABLE` itself, and this package does not rewrite the file drizzle-kit already wrote.
 
 `pgExtension("timescaledb")` has to be exported from the schema. `generate` throws if it is missing, and it writes `CREATE EXTENSION` before `create_hypertable` when both are new. A hypertable does not need the extension before the table: drizzle-kit creates an ordinary table, then this migration converts it. Run `drizzle-kit generate`, then `drizzle-pg-extras generate`, then `drizzle-kit migrate`, and load data after that.
 
@@ -382,38 +383,74 @@ export const metricsHypertable = hypertable(metrics, {
   partitioningColumn: metrics.deviceId, // hash dimension; requires numberPartitions
   numberPartitions: 4,
   migrateData: false, // true makes create_hypertable copy rows that are already in the table
-  compression: {
+  createDefaultIndexes: true, // false omits create_hypertable's default time index
+  columnstore: {
     segmentBy: [metrics.deviceId],
     orderBy: [{ column: metrics.time, direction: 'desc', nulls: 'last' }],
+    sparseIndex: [{ type: 'bloom', columns: [metrics.value] }],
   },
   retention: { dropAfter: '6 months', scheduleInterval: '1 day' },
-  compressionPolicy: { compressAfter: '7 days' },
+  columnstorePolicy: { after: '7 days' },
+  reorder: 'metrics_time_idx', // an index on the table; Timescale names the default one <table>_<time column>_idx
 })
 ```
 
-`chunkTimeInterval`, `dropAfter`, `compressAfter`, and `scheduleInterval` are interval strings such as `"7 days"` or `"1 day 12 hours"`. They are quoted into `INTERVAL '...'`. `compression: {}` enables compression with Timescale's defaults. A compression policy requires `compression`, because Timescale rejects the policy until compression is on.
+`chunkTimeInterval`, `dropAfter`, `dropCreatedBefore`, `after`, `createdBefore`, and `scheduleInterval` are interval strings such as `"7 days"` or `"1 day 12 hours"`. They are quoted into `INTERVAL '...'`. `initialStart` is a timestamp such as `"2024-01-01T00:00:00Z"`, quoted into `TIMESTAMPTZ '...'`. Set `dropAfter` or `dropCreatedBefore`, not both, and `after` or `createdBefore`, not both. `columnstore: {}` enables the columnstore with Timescale's defaults. A columnstore policy requires `columnstore`, because Timescale rejects the policy until the columnstore is on.
 
 Every primary key and unique index on a Drizzle table has to include the time column and the space column, when you set one. Timescale requires that, and `hypertable()` rejects the table when one does not. The time column has to be `NOT NULL` and a `date`, `timestamp`, or `timestamptz`. A `{ name, schema }` table with string column names skips those checks.
 
-The statements are idempotent. `create_hypertable`, `add_retention_policy`, and `add_compression_policy` all pass `if_not_exists => TRUE`, and the compression `ALTER TABLE` can run again. Running the migration twice is a no-op when the hypertable, settings, and policies are already in place. `if_not_exists` does not change an existing policy's interval, so a later edit removes the policy and adds it again. A later `chunkTimeInterval` emits `set_chunk_time_interval`. Adding `partitioningColumn` after the hypertable exists emits `add_dimension`. `migrateData` is read only when the hypertable is first created; changing it later does not write a migration.
+The statements are idempotent. `create_hypertable`, `add_retention_policy`, `add_columnstore_policy`, and `add_reorder_policy` all pass `if_not_exists => TRUE`, and the columnstore `ALTER TABLE` can run again. Running the migration twice is a no-op when the hypertable, settings, and policies are already in place. `if_not_exists` does not change an existing policy's interval, so a later edit removes the policy and adds it again. A later `chunkTimeInterval` emits `set_chunk_time_interval`. Adding `partitioningColumn` after the hypertable exists emits `add_dimension`. `migrateData` and `createDefaultIndexes` are read only when the hypertable is first created; changing them later does not write a migration. A later `reorder` change removes the reorder policy and adds it again.
 
 A later `drizzle-kit generate` still diffs your tables and reports no schema changes. `_pg-extras.json` from 0.4.0 still loads. Hypertable keys are added the next time a migration is written.
 
 ### Timescale limits
 
-- Continuous aggregates are out of scope. They are materialized views with `timescaledb.continuous`, and `drizzle-kit generate` rewrites views, which drops those options. Owning the `SELECT` would also make this package responsible for later column changes. Keep the custom migration from the issue (`CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous)` and `add_continuous_aggregate_policy`) and, if you query the view, declare it with Drizzle's `materializedView(...).existing()`.
 - The time column cannot be an integer. Integer time needs `set_integer_now_func` and integer chunk sizes, and the policies below are intervals.
 - The time column cannot be changed. An existing space partition cannot be removed or pointed at a different column or partition count. `generate` throws. Move the data in a migration you write. The down file for a migration that only added a space partition leaves that dimension in place.
 - Clearing `chunkTimeInterval` is not generated. Set the new interval. The down file for a migration that set an interval for the first time leaves that interval in place.
 - Removing `hypertable()` while the Drizzle table stays is an error. This package will not pretend it turned the hypertable back into a regular table. Remove the table from the Drizzle schema in the same change and `drizzle-kit` drops it, or drop it in a custom migration.
-- Down SQL removes policies and turns compression off. It leaves the hypertable in place, and it does not `DROP EXTENSION timescaledb` while that hypertable still exists, because the drop would fail. `ALTER TABLE ... SET (timescaledb.compress = false)` fails if a chunk is already compressed. Decompress those chunks yourself first. `drizzle-kit migrate` does not run the down file.
+- Down SQL removes policies and turns the columnstore off. It converts columnstore chunks back with `convert_to_rowstore` before it sets `timescaledb.enable_columnstore = false`. It leaves the hypertable in place, and it does not `DROP EXTENSION timescaledb` while that hypertable still exists, because the drop would fail. `drizzle-kit migrate` does not run the down file.
 - `create_hypertable` errors with `table "..." is not empty` unless `migrateData: true`. Migrating data takes a lock and rewrites the rows into chunks.
-- Compression is emitted as `timescaledb.compress`, `timescaledb.compress_segmentby`, `timescaledb.compress_orderby`, and `add_compression_policy`. Current TimescaleDB still accepts those names and treats them as the columnstore. This package does not emit `timescaledb.enable_columnstore` or `add_columnstore_policy`.
-- No `by_range()` / `by_hash()`, reorder policies, retention `drop_created_before`, compression `compress_created_before`, tablespaces, or sparse indexes.
-- `create_hypertable` still creates its default index on the time column. That index is not in the Drizzle schema.
+- The columnstore is emitted as `timescaledb.enable_columnstore`, `timescaledb.segmentby`, `timescaledb.orderby`, `timescaledb.sparse_index`, and `add_columnstore_policy`.
+- No tablespaces.
+- `create_hypertable` creates its default index on the time column unless `createDefaultIndexes: false`. That index is not in the Drizzle schema.
 - Chunks live in `_timescaledb_internal`, next to the `_timescaledb_catalog` and `_timescaledb_config` schemas. `drizzle-kit push` and `drizzle-kit pull` can treat those as tables you forgot to declare. `generate` does not. The supported path is generate, then migrate.
 - A later drizzle-kit migration that drops and recreates the parent (some column type changes) drops the hypertable with it. The extras snapshot already says the table is a hypertable, so this package will not emit `create_hypertable` again. Repair that kit migration by hand.
 - A `{ name, schema }` parent skips the NOT NULL, type, and unique-index checks.
+
+### Continuous aggregates
+
+`continuousAggregate()` writes `CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous) AS <query> WITH NO DATA`, so the migration does not block on materializing history; the refresh policy fills it. drizzle-kit rewrites views it generates and would drop the `timescaledb.continuous` option, so declare the view for queries with Drizzle's `materializedView(...).existing()` and pass it, or pass a `{ name, schema }`:
+
+```ts
+import { continuousAggregate } from '@systemfsoftware/drizzle-pg-extras'
+import { doublePrecision, pgMaterializedView, text, timestamp } from 'drizzle-orm/pg-core'
+
+export const metricsHourly = pgMaterializedView('metrics_hourly', {
+  bucket: timestamp('bucket', { withTimezone: true }),
+  deviceId: text('device_id'),
+  avgValue: doublePrecision('avg_value'),
+}).existing()
+
+export const metricsHourlyAggregate = continuousAggregate(metricsHourly, {
+  source: metricsHypertable,
+  query: `SELECT time_bucket('1 hour', time) AS bucket, device_id, avg(value) AS avg_value
+FROM metrics GROUP BY bucket, device_id`,
+  realTime: false,
+  refreshPolicies: [{ startOffset: '3 days', endOffset: '1 hour', scheduleInterval: '1 hour' }],
+  columnstore: { segmentBy: ['device_id'] },
+  columnstorePolicy: { after: '30 days' },
+  retention: { dropAfter: '2 years' },
+})
+```
+
+- `source` is the hypertable or the continuous aggregate the query reads. Name it so `generate` creates a parent before its child and drops a child before its parent. An aggregate over an aggregate is hierarchical.
+- `realTime: false` sets `timescaledb.materialized_only = true`. `chunkInterval` sets the aggregate's chunk interval; it can be changed later but not cleared. `createGroupIndexes` maps to `timescaledb.create_group_indexes`.
+- `refreshPolicies` takes one or more refresh windows with `startOffset`, `endOffset` and `scheduleInterval`, plus Timescale's optional `initialStart`, `timezone`, `includeTieredData`, `bucketsPerBatch`, `maxBatchesPerExecution` and `refreshNewestFirst`.
+- `columnstore`, `columnstorePolicy` and `retention` work as on a hypertable.
+- A change to `query`, `source` or `createGroupIndexes` drops the aggregate and creates it again empty. `generate` throws when that aggregate is the source of another one: drop the child first, generate and migrate the parent change, then declare the child again.
+- Removing an aggregate and its source table in the same change throws. Remove the aggregate, generate and migrate, then remove the table.
+- To comment an aggregate with `withComment`, declare it with `pgView(...).existing()`. TimescaleDB accepts `COMMENT ON VIEW` for a continuous aggregate, and a `pgMaterializedView` would emit `COMMENT ON MATERIALIZED VIEW`.
 
 ## drizzle-kit push
 
@@ -427,7 +464,7 @@ The supported path is `drizzle-kit generate`, then `drizzle-pg-extras generate`,
 
 `generate` and `check` diff the current declarations against `_pg-extras.json`. They do not read the database catalog. When drizzle-kit drops and recreates a table, Postgres drops the triggers and comments on that table. The snapshot still contains them, and the schema still declares them, so the next `generate` writes nothing for them. Functions are not attached to the table and stay. Partitions and hypertables are the same kind of gap; see [Partition limits](#partition-limits) and [Timescale limits](#timescale-limits).
 
-`renderIdempotent(extras)` snapshots the declarations you pass and prints idempotent SQL for them. Functions and ordinary triggers are `CREATE OR REPLACE`. A constraint trigger is `DROP TRIGGER IF EXISTS` plus `CREATE`. `enabled: false` adds `DISABLE TRIGGER`. Comments are `COMMENT ON`. Extensions are `CREATE EXTENSION IF NOT EXISTS`. Partitions are the conversion, create, attach, and detach statements. Hypertables are `create_hypertable` with `if_not_exists`, plus the compression `ALTER TABLE` and policy calls with `if_not_exists` when those are set. It does not drop objects removed from the schema. Run that script once the table exists again. An up file only repeats its own diff, so the latest up file recreates a trigger only when that `CREATE` is in the file.
+`renderIdempotent(extras)` snapshots the declarations you pass and prints idempotent SQL for them. Functions and ordinary triggers are `CREATE OR REPLACE`. A constraint trigger is `DROP TRIGGER IF EXISTS` plus `CREATE`. `enabled: false` adds `DISABLE TRIGGER`. Comments are `COMMENT ON`. Extensions are `CREATE EXTENSION IF NOT EXISTS`. Partitions are the conversion, create, attach, and detach statements. Hypertables are `create_hypertable` with `if_not_exists`, plus the columnstore `ALTER TABLE`, reorder and policy calls with `if_not_exists` when those are set, and continuous aggregates with their columnstore and policy calls. It does not drop objects removed from the schema. Run that script once the table exists again. An up file only repeats its own diff, so the latest up file recreates a trigger only when that `CREATE` is in the file.
 
 ## Compatibility
 
@@ -437,13 +474,13 @@ The supported path is `drizzle-kit generate`, then `drizzle-pg-extras generate`,
 | drizzle-kit        | `>=0.31.0` journal format. Tested with 0.31.11: `migrate` applies the file, and the next `generate` reports no schema changes.                                                                                                                                      |
 | drizzle-kit 1.0 rc | Writes the folder-per-migration layout with an empty diff snapshot, tested through `drizzle-kit generate`, `check` and `migrate` on 1.0.0-rc.5. A drizzle-kit 0.x journal folder still gets journal entries; upgrade it with `drizzle-kit up` before moving to 1.0. |
 | PostgreSQL         | 14 or newer (`CREATE OR REPLACE TRIGGER`). Tested on 16.                                                                                                                                                                                                            |
-| TimescaleDB        | Hypertables, compression settings, retention policies, and compression policies. Tested with TimescaleDB 2.32 on PostgreSQL 16. CI uses `timescale/timescaledb:2.32.1-pg16`.                                                                                        |
+| TimescaleDB        | Hypertables, columnstore settings and sparse indexes, retention policies, columnstore policies, reorder policies, and continuous aggregates with refresh policies. Tested with TimescaleDB 2.32 on PostgreSQL 16. CI uses `timescale/timescaledb:2.32.1-pg16`.      |
 | Node.js            | 18 or newer. ESM and CJS builds.                                                                                                                                                                                                                                    |
 
 ## What it does not do yet
 
 - Row level security policies. drizzle-kit already generates policies. The partition conversion copies policies that already exist on a parent; it does not author new ones.
-- Creating views and materialized views. drizzle-kit does that. This package comments them and can put triggers on a view. Timescale continuous aggregates are included in that, on purpose. See [Timescale limits](#timescale-limits).
+- Creating views and materialized views. drizzle-kit does that. This package comments them and can put triggers on a view.
 - `DEFERRABLE` on `UNIQUE` and foreign keys. Deferrable constraint triggers are in [Triggers](#triggers).
 - `OUT`, `INOUT`, and `VARIADIC` function arguments. Function comments use the `IN` argument types.
 - Comments on policies, sequences, rules, or individual enum labels.
