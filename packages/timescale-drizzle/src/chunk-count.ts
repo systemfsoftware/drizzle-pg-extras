@@ -11,8 +11,11 @@ export type ChunkCountFinding =
   | { readonly kind: 'unboundedTooLong'; readonly table: string; readonly chunks: number; readonly max: number }
   | { readonly kind: 'unboundedUnknown'; readonly table: string }
 
-function chunksOver(span: string, chunkInterval: string | null): number {
-  return Math.ceil(intervalMilliseconds(span) / intervalMilliseconds(chunkInterval ?? DEFAULT_CHUNK_INTERVAL))
+function chunksOver(span: string, hypertable: HypertableDeclaration): number {
+  const slices = Math.ceil(
+    intervalMilliseconds(span) / intervalMilliseconds(hypertable.chunkTimeInterval ?? DEFAULT_CHUNK_INTERVAL),
+  )
+  return slices * (hypertable.numberPartitions ?? 1)
 }
 
 export function chunkCountFindings(
@@ -25,14 +28,14 @@ export function chunkCountFindings(
     const table = `${identity.schema}.${identity.name}`
     const retained = hypertable.retention?.dropAfter ?? hypertable.retention?.dropCreatedBefore ?? null
     if (retained !== null) {
-      const chunks = chunksOver(retained, hypertable.chunkTimeInterval)
+      const chunks = chunksOver(retained, hypertable)
       if (chunks > maxChunks) findings.push({ kind: 'tooManyChunks', table, chunks, max: maxChunks })
     } else if (!hypertable.unboundedRetention) {
       findings.push({ kind: 'noRetention', table })
     } else if (hypertable.expectedHistory === null) {
       findings.push({ kind: 'unboundedUnknown', table })
     } else {
-      const chunks = chunksOver(hypertable.expectedHistory, hypertable.chunkTimeInterval)
+      const chunks = chunksOver(hypertable.expectedHistory, hypertable)
       if (chunks > maxChunks) findings.push({ kind: 'unboundedTooLong', table, chunks, max: maxChunks })
     }
   }
