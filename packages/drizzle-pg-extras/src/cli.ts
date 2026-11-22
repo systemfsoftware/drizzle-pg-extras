@@ -43,7 +43,6 @@ async function generateCommand(options: CliOptions): Promise<number> {
     out: project.out,
     name: options.name ?? 'pg_extras',
     casing: project.casing,
-    prefix: project.prefix,
     breakpoints: project.breakpoints,
   })
   if (!result.written) {

@@ -1,13 +1,20 @@
 import { PgExtrasError } from './errors.js'
 import { dollarQuote, qualify, quoteIdent, quoteLiteral } from './quote.js'
-import type { CommentSnapshot, ExtensionSnapshot, FunctionSnapshot, TriggerSnapshot } from './snapshot.js'
+import {
+  type CommentSnapshot,
+  type ExtensionSnapshot,
+  type FunctionSnapshot,
+  identityArgTypes,
+  type TriggerSnapshot,
+} from './snapshot.js'
 
 export function createFunctionSql(fn: FunctionSnapshot): string {
   const args = fn.args
     .map((arg) => {
+      const mode = arg.mode === 'in' ? '' : `${arg.mode.toUpperCase()} `
       const name = arg.name ? `${quoteIdent(arg.name)} ` : ''
       const def = arg.defaultExpr !== null ? ` DEFAULT ${arg.defaultExpr}` : ''
-      return `${name}${arg.type}${def}`
+      return `${mode}${name}${arg.type}${def}`
     })
     .join(', ')
   const lines = [
@@ -24,7 +31,7 @@ export function createFunctionSql(fn: FunctionSnapshot): string {
 }
 
 export function dropFunctionSql(fn: FunctionSnapshot): string {
-  const types = fn.args.map((arg) => arg.type).join(', ')
+  const types = identityArgTypes(fn.args).join(', ')
   return `DROP FUNCTION IF EXISTS ${qualify(fn.schema, fn.name)}(${types});`
 }
 

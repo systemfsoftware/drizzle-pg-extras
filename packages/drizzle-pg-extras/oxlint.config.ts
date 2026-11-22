@@ -21,7 +21,7 @@ const disabledWithReasons: Record<string, string> = {
   // unchanged.
   'typescript/strict-boolean-expressions': 'boolean style is intentional',
   'typescript/consistent-type-assertions': 'assertion style matches the codebase',
-  'typescript/no-non-null-assertion': 'tests assert database rows after inserts; rewrites change how tests fail',
+  'typescript/no-non-null-assertion': 'src indexes arrays it has already length-checked',
   'typescript/no-unnecessary-type-assertion': 'churn on existing defensive assertions',
   'typescript/no-unnecessary-condition': 'flags existing defensive checks',
   'typescript/no-unsafe-member-access': 'typed row generics over pg results are follow-up work',
@@ -32,31 +32,16 @@ const disabledWithReasons: Record<string, string> = {
   // key covers the effect-platform overrides, the prefixed key the preset map.
   'no-restricted-imports': 'node: builtins are the runtime surface',
   'eslint/no-restricted-imports': 'node: builtins are the runtime surface',
-  // The two-argument expect(message) is stock Vitest API used for failure context, and
-  // the conditional covers the installed drizzle-kit major.
-  'valid-expect': 'stock Vitest two-argument expect for failure context',
-  'vitest/valid-expect': 'stock Vitest two-argument expect for failure context',
-  'no-conditional-in-test': 'the conditional covers the installed drizzle-kit major',
-  'vitest/no-conditional-in-test': 'the conditional covers the installed drizzle-kit major',
   // Complexity budget flags the existing SQL builders; restructuring risks behavior.
   'complexity': 'the SQL builders are intentionally dense',
   'eslint/complexity': 'the SQL builders are intentionally dense',
   // House test-architecture rules for @systemfsoftware/vitest and spec lanes; this
   // repository runs stock Vitest from a tests/ tree (vitest 3.x kept by ruling).
-  '@systemfsoftware/test-discipline/damp-test-naming': 'existing test names stay',
-  '@systemfsoftware/test-discipline/tests-import-public-api': 'unit tests import src/ modules by design',
-  '@systemfsoftware/test-discipline/test-suffix-outside-src': 'tests live in the tests/ tree',
-  '@systemfsoftware/test-discipline/vitest-from-systemfsoftware-vitest': 'stock Vitest by ruling',
-  '@systemfsoftware/test-discipline/no-behaviourless-assertion': 'house assertion shape',
-  '@systemfsoftware/test-discipline/tests-dir-helpers-in-fixtures': 'house fixture layout',
   // House web/Effect conventions: asserts on spawned process .status, unknown is
   // expected to carry a domain type, the ColumnCasing class is intentional, and the
   // CLI prints String(error).
-  '@systemfsoftware/cell-architecture/no-bodyless-status-assertion':
-    'asserts on spawned process status, not HTTP responses',
   '@systemfsoftware/cell-architecture/ban-unknown':
     'unknown carries SQL strings and parsed snapshots, not a domain type',
-  '@systemfsoftware/cell-architecture/ban-classes': 'the ColumnCasing helper class is intentional',
   '@systemfsoftware/cell-architecture/ban-error-string': 'the CLI prints String(error)',
 }
 

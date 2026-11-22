@@ -33,7 +33,9 @@ export {
   type PgFunction,
   pgFunction,
   type PgFunctionArg,
+  type PgFunctionColumn,
   type PgFunctionConfig,
+  type PgFunctionReturns,
   type PgLanguage,
   type PgPartition,
   pgPartition,
@@ -44,6 +46,7 @@ export {
   type PgVolatility,
   readComment,
   type RowRefs,
+  type SchemaInput,
   type TriggerArg,
   type TriggerConstraint,
   type TriggerEvent,
@@ -66,6 +69,17 @@ export {
   planExtras,
   renderIdempotent,
 } from './generate.js'
+export {
+  type FunctionGrantConfig,
+  type FunctionPrivilege,
+  type GrantSnapshot,
+  type PgGrant,
+  pgGrant,
+  type RelationGrantConfig,
+  type RelationPrivilege,
+  type SchemaGrantConfig,
+  type SchemaPrivilege,
+} from './grant.js'
 export { BREAKPOINT, joinStatements, splitMigrationSql } from './journal.js'
 export {
   attachPartitionSql,
@@ -137,3 +151,10 @@ export {
   setChunkTimeIntervalSql,
 } from './timescale-sql.js'
 export { VERSION } from './version.js'
+export {
+  type PgViewDefinition,
+  type PgViewDefinitionConfig,
+  type ViewCheckOption,
+  viewDefinition,
+  type ViewSnapshot,
+} from './view.js'

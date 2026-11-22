@@ -1,12 +1,12 @@
 # drizzle-pg-extras
 
-Declare the Postgres objects Drizzle still can't model — functions, triggers, comments, extensions, partitioned tables, and TimescaleDB hypertables — in TypeScript next to your Drizzle tables, and turn them into ordinary SQL migration files.
+Declare the Postgres objects Drizzle still can't model — functions, triggers, views, grants, comments, extensions, partitioned tables, and TimescaleDB hypertables — in TypeScript next to your Drizzle tables, and turn them into ordinary SQL migration files.
 
 `drizzle-kit migrate` applies those files. This package does not patch Drizzle. If Drizzle later generates the same objects itself, the SQL you already committed stays valid.
 
 ## Why
 
-These are open Drizzle requests, and the v1.0.0-rc.5 notes don't add them. [PR #4844](https://github.com/drizzle-team/drizzle-orm/pull/4844) is still unmerged.
+These are open Drizzle requests, and the v1.0.0-rc.6 notes don't add them. [PR #4844](https://github.com/drizzle-team/drizzle-orm/pull/4844) is still unmerged.
 
 | Gap                                                                                    | Request                                                                     |
 | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
@@ -71,9 +71,9 @@ The first `generate` writes a migration. The next one writes nothing until a def
 npm install @systemfsoftware/drizzle-pg-extras
 ```
 
-Peer dependency: `drizzle-orm` `>=0.36.4`, including 1.0 (tested with 0.45 and `1.0.0-rc.5`). `drizzle-kit` `>=0.31.0` or 1.0 is optional and only needed to apply migrations. Node.js 18 or newer.
+Peer dependency: `drizzle-orm` `>=1.0.0-rc.6`. `drizzle-kit` `>=1.0.0-rc.6` is optional and only needed to apply migrations. Node.js 20.19 or newer. Drizzle 0.x is not supported; see [Compatibility](#compatibility).
 
-Put the definitions in the same files your `drizzle.config.ts` `schema` already points at, and export them. The CLI reads that config (dialect, schema, `out`, `casing`, `breakpoints`, `migrations.prefix`).
+Put the definitions in the same files your `drizzle.config.ts` `schema` already points at, and export them. The CLI reads that config (dialect, schema, `out`, `casing`, `breakpoints`).
 
 ```json
 {
@@ -87,28 +87,11 @@ Put the definitions in the same files your `drizzle.config.ts` `schema` already 
 
 `drizzle-pg-extras check` exits 1 when a definition changed and no migration was written. Use it in CI.
 
-Run `drizzle-kit generate` first when a trigger or comment targets a table. The table migration has to land above the trigger migration in the journal. Extensions that a column type depends on (PostGIS, for example) are the opposite: that `CREATE EXTENSION` has to run before the table migration. On a new project, generate the extension migration before the first `drizzle-kit generate`, then add triggers and generate again. This package only appends migrations. It will not insert one in front of a migration you have already committed.
+Run `drizzle-kit generate` first when a trigger or comment targets a table. The table migration has to sort before the trigger migration in the migrations folder. Extensions that a column type depends on (PostGIS, for example) are the opposite: that `CREATE EXTENSION` has to run before the table migration. On a new project, generate the extension migration before the first `drizzle-kit generate`, then add triggers and generate again. This package only appends migrations. It will not insert one in front of a migration you have already committed.
 
 ## What gets written
 
-For the stable drizzle-kit 0.31 layout:
-
-```text
-drizzle/
-  0001_pg_extras.sql          applied by drizzle-kit migrate
-  0001_pg_extras.down.sql     not applied by drizzle-kit
-  _pg-extras.json             full extras snapshot, commit this
-  meta/_journal.json          one new entry, same shape kit writes
-  meta/0001_snapshot.json     copy of the previous kit snapshot
-```
-
-The kit snapshot is copied the way `drizzle-kit generate --custom` copies it (new id, `prevId` pointing at the previous snapshot, schema body unchanged). A later `drizzle-kit generate` still diffs your tables, not these extras. `_pg-extras.json` sits outside `meta/` so kit does not try to parse it as a schema snapshot.
-
-Up SQL is split on `--> statement-breakpoint`, which is what `drizzle-kit migrate` and `migrate()` from `drizzle-orm` expect.
-
-Down SQL is the reverse diff: restore the previous function body, drop a trigger that was added, `COMMENT … IS NULL` for a comment that was removed. `drizzle-kit migrate` does not run `.down.sql`, and applying it does not delete the row in `__drizzle_migrations`. To roll back, run the down file yourself, then remove that journal entry and the matching migration row if kit's history should forget it too.
-
-With drizzle-kit 1.0, migrations are one folder each (a timestamp directory with `migration.sql`). `generate` writes the same shape: a new directory with `migration.sql`, `down.sql`, and a `snapshot.json` that is an empty diff chained to the previous snapshot (`type: "diff"`, `prevIds` pointing at it), which is what `drizzle-kit generate --custom` writes. The directory always sorts after the last one, so kit never sees two base snapshots. An empty migrations folder gets the layout of the drizzle-kit installed in your project. Both layouts are covered by the test suite, against drizzle-kit 0.31 and 1.0.0-rc.5, including `drizzle-kit migrate` on Postgres.
+drizzle-kit 1.0 keeps one folder per migration, named by a UTC timestamp. `generate` writes the same shape:
 
 ```
 drizzle/
@@ -119,6 +102,14 @@ drizzle/
     snapshot.json              empty diff, prevIds -> the users snapshot
   _pg-extras.json              full extras snapshot, commit this
 ```
+
+`snapshot.json` is what `drizzle-kit generate --custom` writes for a migration with no schema change: `type: "diff"`, a new id, `prevIds` pointing at the previous snapshot, and no deltas. A later `drizzle-kit generate` still diffs your tables, not these extras. The folder always sorts after the last one, even when both were written in the same second, so kit never sees two base snapshots. A first migration in an empty folder has no snapshot to chain to and gets none; drizzle-kit writes its base snapshot in the next folder. `_pg-extras.json` is not a kit snapshot, and kit does not read it.
+
+A folder that drizzle-kit 0.x wrote (`meta/_journal.json`, or a snapshot without `type`) is refused before anything is written. Run `drizzle-kit up` with drizzle-kit 1.0 to convert it first.
+
+Up SQL is split on `--> statement-breakpoint`, which is what `drizzle-kit migrate` and `migrate()` from `drizzle-orm` expect.
+
+Down SQL is the reverse diff: restore the previous function body, drop a trigger that was added, `COMMENT … IS NULL` for a comment that was removed. `drizzle-kit migrate` does not run `down.sql`, and applying it does not delete the row in `__drizzle_migrations`. To roll back, run the down file yourself, then delete the folder and the matching migration row if kit's history should forget it too.
 
 ## Programmatic API
 
@@ -145,23 +136,25 @@ generate({ extras, out: './drizzle', name: 'touch_updated_at' })
 console.log(renderIdempotent(extras))
 ```
 
-| Export                                            | Role                                                                                                                                                                                                                                 |
-| ------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `pgFunction(name, config)`                        | `plpgsql` or `sql`. Args are `IN` only. `returns` is a SQL type string or a Drizzle column (`users.id`). `searchPath: []` emits `SET search_path TO ''`.                                                                             |
-| `pgTrigger(name, config)`                         | Table, `pgView()`, or `{ name, schema }`. `columns` is `UPDATE OF`. `when` is SQL or `` ({ OLD, NEW }) => sql`…` ``. `constraint`, `referencing`, and `enabled: false` are in [Triggers](#triggers).                                 |
-| `updatedAtTrigger(table, column)`                 | `BEFORE UPDATE` trigger. `column` must be `date`, `time`, or `timestamp`. Tables that share a database column name share one function, `set_<column>`.                                                                               |
-| `pgExtension(name, { schema, version, cascade })` | `CREATE EXTENSION IF NOT EXISTS`, optionally `WITH SCHEMA` and `VERSION`.                                                                                                                                                            |
-| `withComment(target, text)`                       | Table, column builder, enum, finished view or materialized view, `pgFunction`, trigger, extension, or an index / `unique` / `check` / `primaryKey` / `foreignKey` builder. Returns the same object. Does not change Drizzle's SQL.   |
-| `commentOn(target, text)`                         | Same `COMMENT ON` output for a table, column, enum, view, function, trigger, or extension you already hold. Indexes and constraints use `withComment` inside the table callback.                                                     |
-| `partitionedTable(table, { method, columns })`    | Marks a drizzle-kit table as `RANGE`, `LIST`, or `HASH`. The migration converts the empty table. See [Partitioning](#partitioning).                                                                                                  |
-| `pgPartition(name, { parent, ...bounds })`        | `CREATE TABLE ... PARTITION OF`. Bounds are `from`/`to`, `in`, `modulus`/`remainder`, or `default: true`.                                                                                                                            |
-| `pgAttachPartition(table, { parent, ...bounds })` | `ALTER TABLE ... ATTACH PARTITION` for a table drizzle-kit already created.                                                                                                                                                          |
-| `pgDetachPartition(table, { parent })`            | `ALTER TABLE ... DETACH PARTITION`. The table is kept.                                                                                                                                                                               |
-| `hypertable(table, config)`                       | `create_hypertable` with `by_range` and `if_not_exists`, plus optional columnstore settings, a retention policy, a columnstore policy, and a reorder policy. Requires `pgExtension("timescaledb")`. See [TimescaleDB](#timescaledb). |
-| `continuousAggregate(view, config)`               | `CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous)` from your query, plus refresh, columnstore, and retention policies. See [Continuous aggregates](#continuous-aggregates).                                                |
-| `defineExtras` / `collectExtras`                  | Bundle objects, or scan a module's exports (the CLI does the scan).                                                                                                                                                                  |
-| `generate` / `diffSnapshots` / `snapshotExtras`   | Diff against the stored snapshot and write files.                                                                                                                                                                                    |
-| `renderIdempotent`                                | Create-or-replace script for everything currently declared. No drops.                                                                                                                                                                |
+| Export                                            | Role                                                                                                                                                                                                                                                                    |
+| ------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pgFunction(name, config)`                        | `plpgsql` or `sql`, in a schema (`schema: 'app'` or a Drizzle `pgSchema`). Args are `in`, `inout`, `variadic`, or `out`, with SQL defaults. `returns` is a type, `{ kind: 'table', columns }`, or `{ kind: 'setof', type }`. See [Views and grants](#views-and-grants). |
+| `pgTrigger(name, config)`                         | Table, `pgView()`, or `{ name, schema }`. `columns` is `UPDATE OF`. `when` is SQL or `` ({ OLD, NEW }) => sql`…` ``. `constraint`, `referencing`, and `enabled: false` are in [Triggers](#triggers).                                                                    |
+| `updatedAtTrigger(table, column)`                 | `BEFORE UPDATE` trigger. `column` must be `date`, `time`, or `timestamp`. Tables that share a database column name share one function, `set_<column>`.                                                                                                                  |
+| `pgExtension(name, { schema, version, cascade })` | `CREATE EXTENSION IF NOT EXISTS`, optionally `WITH SCHEMA` and `VERSION`.                                                                                                                                                                                               |
+| `withComment(target, text)`                       | Table, column builder, enum, finished view or materialized view, `pgFunction`, trigger, extension, or an index / `unique` / `check` / `primaryKey` / `foreignKey` builder. Returns the same object. Does not change Drizzle's SQL.                                      |
+| `commentOn(target, text)`                         | Same `COMMENT ON` output for a table, column, enum, view, function, trigger, or extension you already hold. Indexes and constraints use `withComment` inside the table callback.                                                                                        |
+| `partitionedTable(table, { method, columns })`    | Marks a drizzle-kit table as `RANGE`, `LIST`, or `HASH`. The migration converts the empty table. See [Partitioning](#partitioning).                                                                                                                                     |
+| `pgPartition(name, { parent, ...bounds })`        | `CREATE TABLE ... PARTITION OF`. Bounds are `from`/`to`, `in`, `modulus`/`remainder`, or `default: true`.                                                                                                                                                               |
+| `pgAttachPartition(table, { parent, ...bounds })` | `ALTER TABLE ... ATTACH PARTITION` for a table drizzle-kit already created.                                                                                                                                                                                             |
+| `pgDetachPartition(table, { parent })`            | `ALTER TABLE ... DETACH PARTITION`. The table is kept.                                                                                                                                                                                                                  |
+| `hypertable(table, config)`                       | `create_hypertable` with `by_range` and `if_not_exists`, plus optional columnstore settings, a retention policy, a columnstore policy, and a reorder policy. Requires `pgExtension("timescaledb")`. See [TimescaleDB](#timescaledb).                                    |
+| `viewDefinition(view, { query })`                 | `CREATE OR REPLACE VIEW` for a Drizzle `pgView(...).existing()`. See [Views and grants](#views-and-grants).                                                                                                                                                             |
+| `pgGrant({ to, on, privileges })`                 | `GRANT` on a table, view, function, or schema, optionally only when the role exists. See [Views and grants](#views-and-grants).                                                                                                                                         |
+| `continuousAggregate(view, config)`               | `CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous)` from your query, plus refresh, columnstore, and retention policies. See [Continuous aggregates](#continuous-aggregates).                                                                                   |
+| `defineExtras` / `collectExtras`                  | Bundle objects, or scan a module's exports (the CLI does the scan).                                                                                                                                                                                                     |
+| `generate` / `diffSnapshots` / `snapshotExtras`   | Diff against the stored snapshot and write files.                                                                                                                                                                                                                       |
+| `renderIdempotent`                                | Create-or-replace script for everything currently declared. No drops.                                                                                                                                                                                                   |
 
 `casing` from `drizzle.config.ts` is applied to key-named columns (`updatedAt` with `snake_case` becomes `updated_at`), same as drizzle-kit. Explicit database names are left alone.
 
@@ -275,6 +268,48 @@ export const profilesGuard = pgTrigger('profiles_guard', {
 - A `{ name, schema }` relation skips the checks that need a Drizzle table or view. Postgres still rejects a view trigger that was declared as a table.
 - Row-level transition triggers on a partition are rejected by Postgres when the migration runs. Foreign tables are not detected through `{ name, schema }`.
 - A view column is matched by view name and column name. Drizzle's view column alias does not carry the schema, so two views with the same name in different schemas are not told apart.
+
+## Views and grants
+
+A view whose query uses Postgres that Drizzle's query builder cannot express (lateral joins, set-returning functions, window clauses) is declared as a Drizzle view with `.existing()`, so drizzle-kit leaves it alone, and given its query here. Interpolated tables, views, and functions render schema-qualified, so the schema name lives in one place.
+
+```ts
+import { pgFunction, pgGrant, viewDefinition } from '@systemfsoftware/drizzle-pg-extras'
+import { sql } from 'drizzle-orm'
+import { integer, pgSchema, text, timestamp } from 'drizzle-orm/pg-core'
+
+export const app = pgSchema('app')
+
+export const orders = app.table('orders', {
+  id: integer('id').primaryKey(),
+  customer: text('customer').notNull(),
+  placedAt: timestamp('placed_at', { withTimezone: true }).notNull(),
+})
+
+export const ordersSince = pgFunction('orders_since', {
+  schema: app,
+  args: [{ name: 'p_since', type: 'timestamptz', default: "now() - interval '1 day'" }],
+  returns: { kind: 'table', columns: [{ name: 'customer', type: 'text' }, { name: 'orders', type: 'bigint' }] },
+  language: 'sql',
+  volatility: 'stable',
+  body: sql`SELECT customer, count(*) FROM ${orders} WHERE placed_at >= p_since GROUP BY customer`,
+})
+
+export const recentOrders = viewDefinition(app.view('recent_orders', {}).existing(), {
+  query: sql`SELECT * FROM ${ordersSince}()`,
+})
+
+export const reporting = [
+  pgGrant({ to: 'reporting', on: recentOrders.view, privileges: ['select'], onlyIfRoleExists: true }),
+  pgGrant({ to: 'reporting', on: ordersSince, privileges: ['execute'], onlyIfRoleExists: true }),
+]
+```
+
+Views are created in dependency order: a view that reads another view, or calls a declared function, comes after it. A changed query drops and creates the view, together with every declared view that reads it, and writes their comments and grants again. Removing a view that another declared view still reads is refused; change the reader in the same change. `securityInvoker`, `securityBarrier`, and `checkOption` map to the view options of the same names.
+
+`onlyIfRoleExists` wraps the statement in a `DO` block that checks `pg_roles`, for a role that exists in some environments only. Without it, a missing role fails the migration. Grants to `PUBLIC` are refused. A removed grant is a `REVOKE` of the removed privileges.
+
+`RETURNS TABLE` cannot be combined with `out` or `inout` arguments, and only `out` arguments can follow a `variadic` one. A function's identity uses its `in`, `inout`, and `variadic` argument types, so adding an `out` argument is a new signature.
 
 ## Partitioning
 
@@ -456,7 +491,7 @@ FROM metrics GROUP BY bucket, device_id`,
 
 `drizzle-kit push` does not read this package and does not run files in the migrations folder. It will not create functions, triggers, comments, extensions, partitions, or hypertables.
 
-Kit 0.31 has no trigger diff, so push does not drop a trigger it never declared. A push that drops or recreates the table still drops that table's triggers and comments, because Postgres drops them with the table. Functions are not attached to the table and stay. Extensions are not created. An extension that installs its own tables (PostGIS) can show up as relations push wants to delete; set `extensionsFilters: ["postgis"]` in `drizzle.config.ts` for that case. Partition children show up the same way: they are tables in the database that are not in the Drizzle schema, and push can try to drop them. Timescale chunks and catalog tables show up the same way. Exclude those names with `tablesFilter` if you push, or don't push.
+drizzle-kit has no trigger diff, so push does not drop a trigger it never declared. A push that drops or recreates the table still drops that table's triggers and comments, because Postgres drops them with the table. Functions are not attached to the table and stay. Extensions are not created. An extension that installs its own tables (PostGIS) can show up as relations push wants to delete; set `extensionsFilters: ["postgis"]` in `drizzle.config.ts` for that case. Partition children show up the same way: they are tables in the database that are not in the Drizzle schema, and push can try to drop them. Timescale chunks and catalog tables show up the same way. Exclude those names with `tablesFilter` if you push, or don't push.
 
 The supported path is `drizzle-kit generate`, then `drizzle-pg-extras generate`, then `drizzle-kit migrate`. If you use push for tables, apply the extras yourself with `renderIdempotent` (or by running the latest up file) after a push that recreated a table. See [Known limitations](#known-limitations).
 
@@ -468,21 +503,19 @@ The supported path is `drizzle-kit generate`, then `drizzle-pg-extras generate`,
 
 ## Compatibility
 
-|                    |                                                                                                                                                                                                                                                                     |
-| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| drizzle-orm        | `>=0.36.4` and 1.0. Tested with 0.45.3 and 1.0.0-rc.5. Drizzle 0.45 and v1.0.0-rc.5 still do not generate functions, triggers, comments, extensions, partitions, or hypertables.                                                                                    |
-| drizzle-kit        | `>=0.31.0` journal format. Tested with 0.31.11: `migrate` applies the file, and the next `generate` reports no schema changes.                                                                                                                                      |
-| drizzle-kit 1.0 rc | Writes the folder-per-migration layout with an empty diff snapshot, tested through `drizzle-kit generate`, `check` and `migrate` on 1.0.0-rc.5. A drizzle-kit 0.x journal folder still gets journal entries; upgrade it with `drizzle-kit up` before moving to 1.0. |
-| PostgreSQL         | 14 or newer (`CREATE OR REPLACE TRIGGER`). Tested on 16.                                                                                                                                                                                                            |
-| TimescaleDB        | Hypertables, columnstore settings and sparse indexes, retention policies, columnstore policies, reorder policies, and continuous aggregates with refresh policies. Tested with TimescaleDB 2.32 on PostgreSQL 16. CI uses `timescale/timescaledb:2.32.1-pg16`.      |
-| Node.js            | 18 or newer. ESM and CJS builds.                                                                                                                                                                                                                                    |
+|             |                                                                                                                                                                                                                                                                              |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| drizzle-orm | `>=1.0.0-rc.6`. Tested with 1.0.0-rc.6, which still does not generate functions, triggers, views with raw queries, grants, comments, extensions, partitions, or hypertables. Drizzle 0.x is not supported.                                                                   |
+| drizzle-kit | `>=1.0.0-rc.6`, folder-per-migration layout. Tested with 1.0.0-rc.6: `migrate` applies the folder, and the next `generate` reports no schema changes. Convert a 0.x journal folder with `drizzle-kit up` first.                                                              |
+| PostgreSQL  | 14 or newer (`CREATE OR REPLACE TRIGGER`). Tested on 17.                                                                                                                                                                                                                     |
+| TimescaleDB | Hypertables, columnstore settings and sparse indexes, retention policies, columnstore policies, reorder policies, and continuous aggregates with refresh policies. Tested on PostgreSQL 17 with the TimescaleDB that the pinned `timescale/timescaledb-ha:pg17` image ships. |
+| Node.js     | 20.19 or newer, which drizzle-kit 1.0 needs. ESM and CJS builds.                                                                                                                                                                                                             |
 
 ## What it does not do yet
 
 - Row level security policies. drizzle-kit already generates policies. The partition conversion copies policies that already exist on a parent; it does not author new ones.
-- Creating views and materialized views. drizzle-kit does that. This package comments them and can put triggers on a view.
+- Materialized views other than continuous aggregates. drizzle-kit creates those. This package comments them.
 - `DEFERRABLE` on `UNIQUE` and foreign keys. Deferrable constraint triggers are in [Triggers](#triggers).
-- `OUT`, `INOUT`, and `VARIADIC` function arguments. Function comments use the `IN` argument types.
 - Comments on policies, sequences, rules, or individual enum labels.
 - Comments on a column-level `.unique()`, `.primaryKey()`, or `.references()`. Declare `unique()`, `primaryKey()`, or `foreignKey()` in the extra config and wrap that builder.
 - An index whose key is a SQL expression needs an explicit name before it can be commented. drizzle-kit requires that name too.

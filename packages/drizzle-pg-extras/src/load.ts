@@ -4,13 +4,11 @@ import { collectExtras } from './collect.js'
 import type { Casing } from './compat.js'
 import type { PgExtras } from './defs.js'
 import { PgExtrasError } from './errors.js'
-import type { MigrationPrefix } from './journal.js'
 
 export type LoadedProject = {
   extras: PgExtras
   out: string
   casing?: Casing
-  prefix: MigrationPrefix
   breakpoints: boolean
   configPath: string
 }
@@ -21,7 +19,6 @@ export type KitConfigShape = {
   out?: string
   casing?: Casing
   breakpoints?: boolean
-  migrations?: { prefix?: MigrationPrefix }
 }
 
 const CONFIG_CANDIDATES = ['drizzle.config.ts', 'drizzle.config.js', 'drizzle.config.mjs', 'drizzle.config.cjs']
@@ -48,7 +45,6 @@ export async function loadProject(cwd: string, configPath?: string): Promise<Loa
     extras: collectExtras(modules),
     out: path.resolve(configDir, config.out ?? 'drizzle'),
     casing: config.casing,
-    prefix: config.migrations?.prefix ?? 'index',
     breakpoints: config.breakpoints ?? true,
     configPath: resolved,
   }
