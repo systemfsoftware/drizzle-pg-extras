@@ -101,7 +101,7 @@ function fail(error: unknown): number {
 }
 
 function printHelp(): void {
-  console.log(`drizzle-pg-extras ${commandList()}
+  console.log(`timescale-drizzle ${commandList()}
 
   generate   Write a drizzle-kit migration for functions, triggers, comments, extensions, partitions, and hypertables that changed
   check      Exit 1 when those definitions changed and no migration was written

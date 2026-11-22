@@ -14,7 +14,7 @@ const V1_1_0_LAYER_DIGESTS: Readonly<Record<string, string>> = {
   arm64: 'sha256:77ba01934c00eb411a42df97af551d904dcc02b8d3db1027101378923f32aab3',
 }
 
-const CACHE = path.join(homedir(), '.cache', 'drizzle-pg-extras', 'integresql-layers')
+const CACHE = path.join(homedir(), '.cache', 'timescale-drizzle', 'integresql-layers')
 
 const BLOCK = 512
 

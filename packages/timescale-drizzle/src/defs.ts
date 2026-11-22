@@ -32,8 +32,8 @@ import { assertIdentifier, normalizeType, quoteIdent } from './quote.js'
 import { renderSql } from './render-sql.js'
 import type { PgViewDefinition } from './view.js'
 
-export const KIND = Symbol.for('drizzle-pg-extras.kind')
-const COMMENT = Symbol.for('drizzle-pg-extras.comment')
+export const KIND = Symbol.for('timescale-drizzle.kind')
+const COMMENT = Symbol.for('timescale-drizzle.comment')
 
 export type ExtrasKind =
   | 'function'

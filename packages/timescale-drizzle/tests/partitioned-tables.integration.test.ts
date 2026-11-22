@@ -1,3 +1,4 @@
+import { Gherkin, Given, it, makeFeature, Then, When } from '@systemfsoftware/effect-gherkin-spec'
 import {
   collectExtras,
   defineExtras,
@@ -6,8 +7,7 @@ import {
   pgAttachPartition,
   pgDetachPartition,
   pgPartition,
-} from '@systemfsoftware/drizzle-pg-extras'
-import { Gherkin, Given, it, makeFeature, Then, When } from '@systemfsoftware/effect-gherkin-spec'
+} from '@systemfsoftware/timescale-drizzle'
 import { sql } from 'drizzle-orm'
 import { integer, pgSchema, pgTable, primaryKey, serial, text, timestamp, uniqueIndex } from 'drizzle-orm/pg-core'
 import { Effect } from 'effect'

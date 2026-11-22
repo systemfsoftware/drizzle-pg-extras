@@ -188,7 +188,7 @@ importers:
         specifier: 7.0.2007
         version: 7.0.2007
 
-  packages/drizzle-pg-extras:
+  packages/timescale-drizzle:
     dependencies:
       jiti:
         specifier: ^2.6.1

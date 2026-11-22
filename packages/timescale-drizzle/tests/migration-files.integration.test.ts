@@ -1,3 +1,4 @@
+import { Gherkin, Given, it, makeFeature, Then, When } from '@systemfsoftware/effect-gherkin-spec'
 import {
   defineExtras,
   generate,
@@ -12,8 +13,7 @@ import {
   splitMigrationSql,
   updatedAtTrigger,
   withComment,
-} from '@systemfsoftware/drizzle-pg-extras'
-import { Gherkin, Given, it, makeFeature, Then, When } from '@systemfsoftware/effect-gherkin-spec'
+} from '@systemfsoftware/timescale-drizzle'
 import { sql } from 'drizzle-orm'
 import { integer, pgTable, text, timestamp } from 'drizzle-orm/pg-core'
 import { Effect } from 'effect'
