@@ -78,13 +78,13 @@ The [package README](packages/timescale-drizzle/README.md) is the full reference
 
 ## Compatibility
 
-| Dependency  | Supported                                   | Tested                                                             |
-| ----------- | ------------------------------------------- | ------------------------------------------------------------------ |
-| drizzle-orm | 1.0.0-rc.6 or newer                         | 1.0.0-rc.6                                                         |
-| drizzle-kit | 1.0.0-rc.6 or newer (folder-per-migration)  | 1.0.0-rc.6                                                         |
-| PostgreSQL  | 14 or newer                                 | 17                                                                 |
+| Dependency  | Supported                                                  | Tested                                                    |
+| ----------- | ---------------------------------------------------------- | --------------------------------------------------------- |
+| drizzle-orm | 1.0.0-rc.6 or newer                                        | 1.0.0-rc.6                                                |
+| drizzle-kit | 1.0.0-rc.6 or newer (folder-per-migration)                 | 1.0.0-rc.6                                                |
+| PostgreSQL  | 14 or newer                                                | 17                                                        |
 | TimescaleDB | Hypertables, columnstore, retention, continuous aggregates | The TimescaleDB in the pinned `timescaledb-ha:pg17` image |
-| Node.js     | 20.19 or newer                              | 22 and 24                                                          |
+| Node.js     | 20.19 or newer                                             | 22 and 24                                                 |
 
 ## Migrating from drizzle-pg-extras
 
