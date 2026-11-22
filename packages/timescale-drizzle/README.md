@@ -480,7 +480,7 @@ An aggregate declared without `bucketColumn`, or by name, has no `within`.
 - `retention: 'unbounded'` without `expectedHistory` prints a note and passes, because its chunk count has no bound to compute.
 - Continuous aggregates are not checked.
 
-A month counts as 30 days and a year as 365. `check` still exits 1 when definitions changed and no migration was written.
+A month counts as 30 days and a year as 365, so the count is an estimate against a budget, not an exact figure. `dropCreatedBefore` counts chunk creation time, so a backfill that creates old chunks today keeps more than the formula says. The count ignores the compressed-chunk tables that a columnstore adds. `check` still exits 1 when definitions changed and no migration was written.
 
 A later `drizzle-kit generate` still diffs your tables and reports no schema changes. `_pg-extras.json` from 0.4.0 still loads. Hypertable keys are added the next time a migration is written.
 

@@ -1,5 +1,6 @@
 import type { HypertableDeclaration } from './defs.js'
 import { hypertableRelation, tableIdentity } from './defs.js'
+import { PgExtrasError } from './errors.js'
 import { intervalMilliseconds } from './read.js'
 
 export const DEFAULT_MAX_CHUNKS = 500
@@ -22,6 +23,9 @@ export function chunkCountFindings(
   hypertables: readonly HypertableDeclaration[],
   maxChunks: number,
 ): ChunkCountFinding[] {
+  if (!Number.isInteger(maxChunks) || maxChunks < 1) {
+    throw new PgExtrasError('maxChunks must be a positive whole number')
+  }
   const findings: ChunkCountFinding[] = []
   for (const hypertable of hypertables) {
     const identity = tableIdentity(hypertableRelation(hypertable))
