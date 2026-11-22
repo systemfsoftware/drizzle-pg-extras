@@ -550,6 +550,77 @@ function assertAggregateSourceDeclared(
   }
 }
 
+type RelationReference = {
+  readonly schema: string | null
+  readonly name: string
+}
+
+const unquoted = (part: string): string => part.startsWith('"') ? part.slice(1, -1) : part.toLowerCase()
+
+const relationPattern = /\b(?:FROM|JOIN)\s+((?:"[^"]+"|[A-Za-z_][\w$]*)(?:\s*\.\s*(?:"[^"]+"|[A-Za-z_][\w$]*))?)/gi
+
+function relationReferenceOf(target: string): RelationReference {
+  const [first = '', second] = target.split(/\s*\.\s*/)
+  return second === undefined
+    ? { schema: null, name: unquoted(first) }
+    : { schema: unquoted(first), name: unquoted(second) }
+}
+
+function relationsReadBy(query: string): RelationReference[] {
+  return [...query.matchAll(relationPattern)].map((match) => relationReferenceOf(match[1] ?? ''))
+}
+
+const nameMatches = (reference: RelationReference, candidate: ContinuousAggregateSnapshot): boolean =>
+  reference.name === candidate.name
+
+const schemaMatches = (reference: RelationReference, candidate: ContinuousAggregateSnapshot): boolean =>
+  reference.schema === null || reference.schema === candidate.schema
+
+const readsCandidate = (reference: RelationReference, candidate: ContinuousAggregateSnapshot): boolean =>
+  nameMatches(reference, candidate) && schemaMatches(reference, candidate)
+
+function readsAggregate(
+  references: readonly RelationReference[],
+  candidate: ContinuousAggregateSnapshot,
+): boolean {
+  return references.some((reference) => readsCandidate(reference, candidate))
+}
+
+function declaredParentOf(
+  aggregate: ContinuousAggregateSnapshot,
+  byId: Map<string, ContinuousAggregateSnapshot>,
+): ContinuousAggregateSnapshot | undefined {
+  if (aggregate.source?.kind !== 'continuousAggregate') return undefined
+  return byId.get(JSON.stringify(['continuousAggregate', aggregate.source.schema, aggregate.source.name]))
+}
+
+const otherAggregateOf =
+  (aggregate: ContinuousAggregateSnapshot) => (candidate: ContinuousAggregateSnapshot): boolean =>
+    candidate.id !== aggregate.id
+
+function referencedParentsOf(
+  aggregate: ContinuousAggregateSnapshot,
+  aggregates: readonly ContinuousAggregateSnapshot[],
+): ContinuousAggregateSnapshot[] {
+  const references = relationsReadBy(aggregate.query)
+  return aggregates.filter(otherAggregateOf(aggregate))
+    .filter((candidate) => readsAggregate(references, candidate))
+}
+
+const distinctFromParent =
+  (declared: ContinuousAggregateSnapshot | undefined) => (candidate: ContinuousAggregateSnapshot): boolean =>
+    candidate.id !== declared?.id
+
+function parentsOf(
+  aggregate: ContinuousAggregateSnapshot,
+  aggregates: readonly ContinuousAggregateSnapshot[],
+  byId: Map<string, ContinuousAggregateSnapshot>,
+): ContinuousAggregateSnapshot[] {
+  const declared = declaredParentOf(aggregate, byId)
+  const referenced = referencedParentsOf(aggregate, aggregates).filter(distinctFromParent(declared))
+  return declared ? [declared, ...referenced] : referenced
+}
+
 function orderedContinuousAggregates(
   aggregates: readonly ContinuousAggregateSnapshot[],
 ): ContinuousAggregateSnapshot[] {
@@ -565,12 +636,7 @@ function orderedContinuousAggregates(
       )
     }
     visiting.add(aggregate.id)
-    if (aggregate.source?.kind === 'continuousAggregate') {
-      const parent = byId.get(
-        JSON.stringify(['continuousAggregate', aggregate.source.schema, aggregate.source.name]),
-      )
-      if (parent) visit(parent)
-    }
+    for (const parent of parentsOf(aggregate, aggregates, byId)) visit(parent)
     visiting.delete(aggregate.id)
     done.add(aggregate.id)
     ordered.push(aggregate)
