@@ -1,4 +1,4 @@
-import { and, Column, desc, gte, is, lt, type SQL, sql, type SQLWrapper, Subquery, Table } from 'drizzle-orm'
+import { and, Column, desc, gte, is, lt, type SQL, sql, Subquery, Table } from 'drizzle-orm'
 import { type PgColumn, QueryBuilder, type SubqueryWithSelection } from 'drizzle-orm/pg-core'
 import { PgExtrasError } from './errors.js'
 
@@ -17,7 +17,7 @@ export type LatestOptions<TWindow> = {
   readonly until?: Date
 }
 
-export type BoundExpression = Exclude<SQLWrapper, Column | Table | Subquery>
+export type BoundExpression = SQL
 
 export type AnyPgDatabase = { readonly select: (...args: never[]) => unknown }
 
@@ -26,6 +26,7 @@ export type BoundedSource = Parameters<ReturnType<QueryBuilder['select']>['from'
 const DEFAULT_CHUNK_INTERVAL = '7 days'
 const DEFAULT_MAX_LOOKBACK_CHUNKS = 64
 const WIDENING_FACTOR = 4
+const CLOCK_SKEW_MS = 60_000
 const FIRST_PROBE_INTERVALS = 2
 
 const UNIT_MS: Record<string, number> = {
@@ -136,7 +137,7 @@ export async function latestRow<TRow>(
     throw new PgExtrasError('latest(): maxLookbackChunks must be a positive integer')
   }
   const chunkIntervalMs = intervalMilliseconds(read.chunkInterval ?? DEFAULT_CHUNK_INTERVAL)
-  const until = options?.until ?? new Date(Date.now() + chunkIntervalMs)
+  const until = options?.until ?? new Date(Date.now() + CLOCK_SKEW_MS)
   if (!Number.isFinite(until.getTime()) || !Number.isFinite(until.getTime() - chunkIntervalMs * maxLookbackChunks)) {
     throw new PgExtrasError('latest(): until and maxLookbackChunks must give a finite time range')
   }
