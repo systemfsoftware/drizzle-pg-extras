@@ -16,6 +16,8 @@ import {
   type PgTrigger,
   type PgViewLike,
 } from './defs.js'
+import type { PgGrant } from './grant.js'
+import type { PgViewDefinition } from './view.js'
 
 export function collectExtras(modules: Record<string, unknown> | readonly Record<string, unknown>[]): PgExtras {
   const extras: PgExtras = {
@@ -31,6 +33,8 @@ export function collectExtras(modules: Record<string, unknown> | readonly Record
     detaches: [],
     hypertables: [],
     continuousAggregates: [],
+    viewDefinitions: [],
+    grants: [],
   }
   const seen = new Set<unknown>()
   const list = Array.isArray(modules) ? modules : [modules]
@@ -57,6 +61,8 @@ export function defineExtras(input: {
   detaches?: readonly PgDetach[]
   hypertables?: readonly Hypertable[]
   continuousAggregates?: readonly ContinuousAggregate[]
+  viewDefinitions?: readonly PgViewDefinition[]
+  grants?: readonly PgGrant[]
 }): PgExtras {
   return collectExtras({
     functions: input.functions ?? [],
@@ -71,6 +77,8 @@ export function defineExtras(input: {
     detaches: input.detaches ?? [],
     hypertables: input.hypertables ?? [],
     continuousAggregates: input.continuousAggregates ?? [],
+    viewDefinitions: input.viewDefinitions ?? [],
+    grants: input.grants ?? [],
   })
 }
 
@@ -126,6 +134,19 @@ function walk(value: unknown, extras: PgExtras, seen: Set<unknown>): void {
     extras.continuousAggregates.push(aggregate)
     if (aggregate.view) walk(aggregate.view, extras, seen)
     if (aggregate.source) walk(aggregate.source, extras, seen)
+    return
+  }
+  if (kind === 'viewDefinition') {
+    const definition = value as PgViewDefinition
+    extras.viewDefinitions.push(definition)
+    walk(definition.view, extras, seen)
+    for (const dependency of definition.dependsOn) walk(dependency, extras, seen)
+    return
+  }
+  if (kind === 'grant') {
+    const grant = value as PgGrant
+    extras.grants.push(grant)
+    walk(grant.on, extras, seen)
     return
   }
   if (isPgView(value) || isPgMaterializedView(value)) {

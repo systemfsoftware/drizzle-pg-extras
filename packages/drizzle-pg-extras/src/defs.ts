@@ -25,12 +25,14 @@ import {
   UniqueOnConstraintBuilder,
   ViewBuilder,
 } from 'drizzle-orm/pg-core'
-import { type Casing, ColumnCasing, columnTable } from './compat.js'
+import { type Casing, columnDbName, columnTable } from './compat.js'
 import { PgExtrasError } from './errors.js'
-import { assertIdentifier, quoteIdent } from './quote.js'
+import type { PgGrant } from './grant.js'
+import { assertIdentifier, normalizeType, quoteIdent } from './quote.js'
 import { renderSql } from './render-sql.js'
+import type { PgViewDefinition } from './view.js'
 
-const KIND = Symbol.for('drizzle-pg-extras.kind')
+export const KIND = Symbol.for('drizzle-pg-extras.kind')
 const COMMENT = Symbol.for('drizzle-pg-extras.comment')
 
 export type ExtrasKind =
@@ -43,6 +45,8 @@ export type ExtrasKind =
   | 'detach'
   | 'hypertable'
   | 'continuousAggregate'
+  | 'viewDefinition'
+  | 'grant'
 
 export type PgLanguage = 'plpgsql' | 'sql'
 export type PgVolatility = 'volatile' | 'stable' | 'immutable'
@@ -55,17 +59,31 @@ const EVENT_ORDER: readonly TriggerEvent[] = ['insert', 'update', 'delete', 'tru
 
 export type PgType = string | AnyPgColumn
 
-export type PgFunctionArg = {
-  name?: string
-  type: PgType
-  /** SQL expression, such as `0` or `'pending'`. Not a bind parameter. */
-  default?: string
-}
+export type PgFunctionArg =
+  | {
+    mode?: 'in'
+    name?: string
+    type: PgType
+    /** SQL expression, such as `0` or `'pending'`. Not a bind parameter. */
+    default?: string
+  }
+  | { mode: 'inout'; name: string; type: PgType; default?: string }
+  | { mode: 'variadic'; name?: string; type: PgType }
+  | { mode: 'out'; name: string; type: PgType }
+
+export type PgFunctionColumn = { name: string; type: PgType }
+
+export type PgFunctionReturns =
+  | PgType
+  | { kind: 'table'; columns: readonly [PgFunctionColumn, ...PgFunctionColumn[]] }
+  | { kind: 'setof'; type: PgType }
+
+export type SchemaInput = string | { readonly schemaName: string }
 
 export type PgFunctionConfig = {
-  schema?: string
+  schema?: SchemaInput
   args?: readonly PgFunctionArg[]
-  returns: PgType
+  returns: PgFunctionReturns
   language?: PgLanguage
   body: string | SQL
   volatility?: PgVolatility
@@ -83,13 +101,16 @@ export type PgFunction = {
   readonly name: string
   readonly schema: string
   readonly args: readonly PgFunctionArg[]
-  readonly returns: PgType
+  readonly returns: PgFunctionReturns
   readonly language: PgLanguage
   readonly body: string | SQL
   readonly volatility: PgVolatility
   readonly security: PgSecurity
   readonly searchPath: readonly string[] | null
   readonly strict: boolean
+  /** Interpolating the function in a Drizzle `sql` fragment renders its schema-qualified name. */
+  getSQL(): SQL
+  shouldOmitSQLParens(): boolean
 }
 
 export type RowRefs<TTable extends PgTable> = {
@@ -357,9 +378,11 @@ export type PgExtras = {
   detaches: PgDetach[]
   hypertables: Hypertable[]
   continuousAggregates: ContinuousAggregate[]
+  viewDefinitions: PgViewDefinition[]
+  grants: PgGrant[]
 }
 
-function brand<T extends object, K extends ExtrasKind>(value: T, kind: K): T & { readonly [KIND]: K } {
+export function brand<T extends object, K extends ExtrasKind>(value: T, kind: K): T & { readonly [KIND]: K } {
   Object.defineProperty(value, KIND, { value: kind, enumerable: false })
   return value as T & { readonly [KIND]: K }
 }
@@ -376,7 +399,9 @@ export function extrasKind(value: unknown): ExtrasKind | null {
     kind === 'partition' ||
     kind === 'detach' ||
     kind === 'hypertable' ||
-    kind === 'continuousAggregate'
+    kind === 'continuousAggregate' ||
+    kind === 'viewDefinition' ||
+    kind === 'grant'
   ) {
     return kind
   }
@@ -496,7 +521,7 @@ export function readComment(target: object): string | undefined {
 
 export function pgFunction(name: string, config: PgFunctionConfig): PgFunction {
   assertIdentifier('function', name)
-  const schema = config.schema ?? 'public'
+  const schema = config.schema === undefined ? 'public' : schemaOf(config.schema)
   assertIdentifier('function schema', schema)
   const language = config.language ?? 'plpgsql'
   if (language !== 'plpgsql' && language !== 'sql') {
@@ -508,22 +533,12 @@ export function pgFunction(name: string, config: PgFunctionConfig): PgFunction {
     throw new PgExtrasError(`pgFunction("${name}"): body is empty`)
   }
   const args = config.args ?? []
-  const seen = new Set<string>()
-  for (const arg of args) {
-    if (arg.name !== undefined) {
-      assertIdentifier(`pgFunction("${name}") argument`, arg.name)
-      if (seen.has(arg.name)) throw new PgExtrasError(`pgFunction("${name}"): duplicate argument "${arg.name}"`)
-      seen.add(arg.name)
-    }
-    if (arg.default !== undefined && arg.default.includes(';')) {
-      throw new PgExtrasError(`pgFunction("${name}"): argument default cannot contain ";"`)
-    }
-    if (typeof arg.type === 'string' && arg.type.trim() === '') {
-      throw new PgExtrasError(`pgFunction("${name}"): argument type is empty`)
-    }
-  }
+  readFunctionArgs(name, args)
+  readFunctionReturns(name, config.returns, args)
   return brand(
     {
+      getSQL: () => sql`${sql.identifier(schema)}.${sql.identifier(name)}`,
+      shouldOmitSQLParens: () => true,
       name,
       schema,
       args,
@@ -537,6 +552,89 @@ export function pgFunction(name: string, config: PgFunctionConfig): PgFunction {
     },
     'function',
   )
+}
+
+export function functionTypeSql(type: PgType): string {
+  return normalizeType(typeof type === 'string' ? type : type.getSQLType())
+}
+
+export function functionReturnsSql(returns: PgFunctionReturns): string {
+  if (typeof returns === 'string' || is(returns, Column)) return functionTypeSql(returns as PgType)
+  if (returns.kind === 'setof') return `SETOF ${functionTypeSql(returns.type)}`
+  const columns = returns.columns.map((column) => `${quoteIdent(column.name)} ${functionTypeSql(column.type)}`)
+  return `TABLE (${columns.join(', ')})`
+}
+
+export function declaredFunctionId(fn: PgFunction): string {
+  const types = fn.args.filter((arg) => arg.mode !== 'out').map((arg) => functionTypeSql(arg.type))
+  return JSON.stringify([fn.schema, fn.name, types])
+}
+
+export function schemaOf(input: SchemaInput): string {
+  return typeof input === 'string' ? input : input.schemaName
+}
+
+function readFunctionArgs(name: string, args: readonly PgFunctionArg[]): void {
+  const seen = new Set<string>()
+  let defaulted = false
+  args.forEach((arg, index) => {
+    const mode = arg.mode ?? 'in'
+    if (mode !== 'in' && mode !== 'inout' && mode !== 'variadic' && mode !== 'out') {
+      throw new PgExtrasError(`pgFunction("${name}"): argument mode must be "in", "inout", "variadic", or "out"`)
+    }
+    if (arg.name !== undefined) {
+      assertIdentifier(`pgFunction("${name}") argument`, arg.name)
+      if (seen.has(arg.name)) throw new PgExtrasError(`pgFunction("${name}"): duplicate argument "${arg.name}"`)
+      seen.add(arg.name)
+    } else if (mode === 'out' || mode === 'inout') {
+      throw new PgExtrasError(`pgFunction("${name}"): ${mode} arguments need a name`)
+    }
+    if (typeof arg.type === 'string' && arg.type.trim() === '') {
+      throw new PgExtrasError(`pgFunction("${name}"): argument type is empty`)
+    }
+    if (mode === 'variadic' && args.slice(index + 1).some((later) => (later.mode ?? 'in') !== 'out')) {
+      throw new PgExtrasError(`pgFunction("${name}"): only out arguments can follow the variadic argument`)
+    }
+    const def = 'default' in arg ? arg.default : undefined
+    if (def !== undefined) {
+      if (mode === 'out' || mode === 'variadic') {
+        throw new PgExtrasError(`pgFunction("${name}"): ${mode} arguments cannot have a default`)
+      }
+      if (def.includes(';')) throw new PgExtrasError(`pgFunction("${name}"): argument default cannot contain ";"`)
+      defaulted = true
+    } else if (defaulted && (mode === 'in' || mode === 'inout')) {
+      throw new PgExtrasError(
+        `pgFunction("${name}"): argument ${arg.name ?? index + 1} follows a defaulted argument and needs a default too`,
+      )
+    }
+  })
+}
+
+function readFunctionReturns(name: string, returns: PgFunctionReturns, args: readonly PgFunctionArg[]): void {
+  if (typeof returns === 'string' || is(returns, Column)) {
+    if (typeof returns === 'string' && returns.trim() === '') {
+      throw new PgExtrasError(`pgFunction("${name}"): returns is empty`)
+    }
+    return
+  }
+  if (returns.kind === 'setof') return
+  if (returns.kind !== 'table') {
+    throw new PgExtrasError(`pgFunction("${name}"): returns must be a type, { kind: "table" }, or { kind: "setof" }`)
+  }
+  if (returns.columns.length === 0) {
+    throw new PgExtrasError(`pgFunction("${name}"): RETURNS TABLE needs at least one column`)
+  }
+  if (args.some((arg) => arg.mode === 'out' || arg.mode === 'inout')) {
+    throw new PgExtrasError(`pgFunction("${name}"): RETURNS TABLE cannot be combined with out or inout arguments`)
+  }
+  const seen = new Set<string>()
+  for (const column of returns.columns) {
+    assertIdentifier(`pgFunction("${name}") returned column`, column.name)
+    if (seen.has(column.name)) {
+      throw new PgExtrasError(`pgFunction("${name}"): duplicate returned column "${column.name}"`)
+    }
+    seen.add(column.name)
+  }
 }
 
 type TriggerOptions = {
@@ -736,9 +834,7 @@ function finishTrigger(
   const fn = config.function
   if (fn && extrasKind(fn) === 'function') {
     const defined = fn as PgFunction
-    const returns = typeof defined.returns === 'string'
-      ? defined.returns.trim().toLowerCase()
-      : defined.returns.getSQLType().toLowerCase()
+    const returns = functionReturnsSql(defined.returns)
     if (returns !== 'trigger') {
       triggerError(label, `function "${defined.name}" returns ${returns}, not trigger`)
     }
@@ -945,7 +1041,7 @@ function renderWhenInput(
   } else {
     value = when
   }
-  const text = (typeof value === 'string' ? value : renderSql(value, casing)).trim().replace(/;+\s*$/, '')
+  const text = (typeof value === 'string' ? value : renderSql(value)).trim().replace(/;+\s*$/, '')
   return text.length === 0 ? null : text
 }
 
@@ -954,10 +1050,9 @@ function rowProxy(
   alias: 'NEW' | 'OLD',
   casing: Casing | undefined,
 ): Record<string, SQL> {
-  const cache = new ColumnCasing(casing)
   const refs: Record<string, SQL> = {}
   for (const [key, column] of columns) {
-    refs[key] = sql.raw(`${alias}.${quoteIdent(cache.getColumnCasing(column))}`)
+    refs[key] = sql.raw(`${alias}.${quoteIdent(columnDbName(column, casing))}`)
   }
   return refs
 }
@@ -1427,11 +1522,12 @@ function assertKeyCoveredByUniques(
     if (!index.config.unique) continue
     const names: string[] = []
     for (const column of index.config.columns) {
-      if (!is(column, Column)) {
+      const indexed = column as { name?: string }
+      if (is(column, SQL) || !indexed.name) {
         const indexName = index.config.name ? ` "${index.config.name}"` : ''
         throw new PgExtrasError(`${where}: unique index${indexName} includes an expression. ${expressionRequirement}`)
       }
-      names.push(column.name)
+      names.push(indexed.name)
     }
     groups.push({
       label: index.config.name ? `unique index "${index.config.name}"` : 'unique index',

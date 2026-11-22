@@ -6,6 +6,7 @@
   "type": "module",
   "packageManager": "pnpm@12.9.0",
   "scripts": {
+    "prepare": "effect-tsgo patch --oxlint --no-typescript --skip-missing",
     "build": "pnpm --filter @systemfsoftware/drizzle-pg-extras run build",
     "typecheck": "pnpm --filter @systemfsoftware/drizzle-pg-extras run typecheck",
     "lint": "pnpm --filter @systemfsoftware/drizzle-pg-extras run lint",
@@ -14,6 +15,7 @@
     "format:check": "dprint check"
   },
   "devDependencies": {
+    "@effect/tsgo": "^0.70.0",
     "@commitlint/cli": "^21.2.4",
     "@commitlint/config-conventional": "^21.2.4",
     "@commitlint/types": "^21.2.3",

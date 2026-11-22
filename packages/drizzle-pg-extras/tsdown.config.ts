@@ -7,7 +7,7 @@ export default defineConfig([
     dts: true,
     sourcemap: true,
     clean: true,
-    target: 'node18',
+    target: 'node20',
     deps: { onlyBundle: false },
     outExtensions: ({ format }) => ({
       js: format === 'es' ? '.js' : '.cjs',
@@ -20,7 +20,7 @@ export default defineConfig([
     dts: false,
     sourcemap: true,
     clean: false,
-    target: 'node18',
+    target: 'node20',
     deps: { onlyBundle: false },
     outExtensions: () => ({ js: '.js' }),
     banner: { js: '#!/usr/bin/env node' },

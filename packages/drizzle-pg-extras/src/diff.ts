@@ -1,4 +1,5 @@
 import { PgExtrasError } from './errors.js'
+import { grantChanges, grantSql } from './grant.js'
 import {
   attachPartitionSql,
   convertPartitionedTableSql,
@@ -56,6 +57,7 @@ import {
   removeRetentionPolicySql,
   setChunkTimeIntervalSql,
 } from './timescale-sql.js'
+import { createViewSql, orderedViews, viewChanges } from './view.js'
 
 export type SqlDiff = {
   up: string[]
@@ -77,14 +79,15 @@ export function idempotentStatements(snapshot: Snapshot): string[] {
   const statements: string[] = []
   for (const ext of snapshot.extensions) statements.push(createExtensionSql(ext))
   const sqlFunctions = snapshot.functions.some((fn) => fn.language === 'sql')
-  if (sqlFunctions) statements.push('SET check_function_bodies = off')
+  if (sqlFunctions) statements.push('SET check_function_bodies = off;')
   for (const fn of snapshot.functions) statements.push(createFunctionSql(fn))
-  if (sqlFunctions) statements.push('SET check_function_bodies = on')
+  if (sqlFunctions) statements.push('SET check_function_bodies = on;')
   statements.push(...partitionStatements(snapshot))
   for (const hypertable of snapshot.hypertables) statements.push(...createHypertableStatements(hypertable))
   for (const aggregate of orderedContinuousAggregates(snapshot.continuousAggregates)) {
     statements.push(...createContinuousAggregateStatements(aggregate))
   }
+  for (const view of orderedViews(snapshot.views)) statements.push(createViewSql(view))
   for (const comment of snapshot.comments) {
     if (comment.kind !== 'trigger') statements.push(commentSql(comment, comment.text))
   }
@@ -92,6 +95,7 @@ export function idempotentStatements(snapshot: Snapshot): string[] {
   for (const comment of snapshot.comments) {
     if (comment.kind === 'trigger') statements.push(commentSql(comment, comment.text))
   }
+  for (const grant of snapshot.grants) statements.push(grantSql(grant))
   return statements
 }
 
@@ -118,7 +122,9 @@ function statementsBetween(from: Snapshot, to: Snapshot, skipDroppedTables: bool
   const dropFnIds = new Set<string>()
   for (const [id, fn] of fromFns) {
     const next = toFns.get(id)
-    if (!next || next.returns !== fn.returns) dropFnIds.add(id)
+    if (!next || next.returns !== fn.returns || JSON.stringify(next.args) !== JSON.stringify(fn.args)) {
+      dropFnIds.add(id)
+    }
   }
 
   const triggersToDrop: TriggerSnapshot[] = []
@@ -139,7 +145,25 @@ function statementsBetween(from: Snapshot, to: Snapshot, skipDroppedTables: bool
 
   const statements: string[] = []
   const caggs = continuousAggregateChanges(from, to, skipDroppedTables)
+  const views = viewChanges(from.views, to.views, dropFnIds, new Set([...caggs.rebuilt, ...caggs.dropped]))
+  const rebuiltRelations = new Set([...caggs.rebuilt, ...views.rebuilt])
+  const droppedRelations = new Set([...caggs.dropped, ...views.dropped])
+  const grants = grantChanges(from.grants, to.grants, {
+    gone: (grant) =>
+      grant.target === 'schema'
+        ? false
+        : grant.target === 'function'
+        ? !toFns.has(functionSignature(grant.schema, grant.name, grant.argTypes))
+        : droppedRelations.has(`${grant.schema}.${grant.name}`) ||
+          (skipDroppedTables && tableGone(from, to, grant.schema, grant.name)),
+    recreated: (grant) =>
+      grant.target === 'function'
+        ? dropFnIds.has(functionSignature(grant.schema, grant.name, grant.argTypes))
+        : rebuiltRelations.has(`${grant.schema}.${grant.name}`),
+  })
   for (const trigger of triggersToDrop) statements.push(dropTriggerSql(trigger))
+  statements.push(...grants.revoke)
+  statements.push(...views.drop)
   statements.push(...partitionChanges(from, to, skipDroppedTables))
   statements.push(...caggs.drop)
 
@@ -167,10 +191,11 @@ function statementsBetween(from: Snapshot, to: Snapshot, skipDroppedTables: bool
     return !prev || !sameFunction(prev, fn)
   })
   const needsBodyOff = fnsToWrite.some((fn) => fn.language === 'sql')
-  if (needsBodyOff) statements.push('SET check_function_bodies = off')
+  if (needsBodyOff) statements.push('SET check_function_bodies = off;')
   for (const fn of fnsToWrite) statements.push(createFunctionSql(fn))
-  if (needsBodyOff) statements.push('SET check_function_bodies = on')
+  if (needsBodyOff) statements.push('SET check_function_bodies = on;')
   statements.push(...caggs.write)
+  statements.push(...views.write)
 
   emitComments(
     statements,
@@ -184,8 +209,8 @@ function statementsBetween(from: Snapshot, to: Snapshot, skipDroppedTables: bool
     toTriggers,
     toExt,
     skipDroppedTables,
-    caggs.rebuilt,
-    caggs.dropped,
+    rebuiltRelations,
+    droppedRelations,
     'other',
   )
 
@@ -212,10 +237,11 @@ function statementsBetween(from: Snapshot, to: Snapshot, skipDroppedTables: bool
     toTriggers,
     toExt,
     skipDroppedTables,
-    caggs.rebuilt,
-    caggs.dropped,
+    rebuiltRelations,
+    droppedRelations,
     'trigger',
   )
+  statements.push(...grants.grant)
 
   for (const ext of [...from.extensions].sort((a, b) => a.id.localeCompare(b.id))) {
     if (!toExt.has(ext.id)) {
@@ -250,8 +276,8 @@ function emitComments(
   toTriggers: Map<string, TriggerSnapshot>,
   toExt: Map<string, Snapshot['extensions'][number]>,
   skipDroppedTables: boolean,
-  rebuiltCaggs: Set<string>,
-  droppedCaggs: Set<string>,
+  rebuiltRelations: Set<string>,
+  droppedRelations: Set<string>,
   mode: 'trigger' | 'other',
 ): void {
   const ids = [...new Set([...fromComments.keys(), ...toComments.keys()])].sort()
@@ -263,12 +289,12 @@ function emitComments(
     if (mode === 'trigger' ? subject.kind !== 'trigger' : subject.kind === 'trigger') continue
     if (
       prev && next && prev.text === next.text &&
-      !commentRewritten(next, dropFnIds, toFns, droppedTriggerIds, toTriggers, rebuiltCaggs)
+      !commentRewritten(next, dropFnIds, toFns, droppedTriggerIds, toTriggers, rebuiltRelations)
     ) {
       continue
     }
     if (!next && prev) {
-      if (skipCommentNull(prev, to, toFns, toTriggers, toExt, skipDroppedTables, from, droppedCaggs)) continue
+      if (skipCommentNull(prev, to, toFns, toTriggers, toExt, skipDroppedTables, from, droppedRelations)) continue
       statements.push(commentSql(prev, null))
       continue
     }
@@ -282,7 +308,7 @@ function commentRewritten(
   toFns: Map<string, Snapshot['functions'][number]>,
   droppedTriggerIds: Set<string>,
   toTriggers: Map<string, TriggerSnapshot>,
-  rebuiltCaggs: Set<string>,
+  rebuiltRelations: Set<string>,
 ): boolean {
   if (comment.kind === 'function') {
     const id = functionSignature(comment.schema, comment.name, comment.argTypes ?? [])
@@ -290,7 +316,7 @@ function commentRewritten(
   }
   if (comment.kind === 'trigger') return droppedTriggerIds.has(comment.id) && toTriggers.has(comment.id)
   if (comment.kind === 'materializedView' || comment.kind === 'view') {
-    return rebuiltCaggs.has(`${comment.schema}.${comment.name}`)
+    return rebuiltRelations.has(`${comment.schema}.${comment.name}`)
   }
   return false
 }
@@ -303,7 +329,7 @@ function skipCommentNull(
   toExt: Map<string, Snapshot['extensions'][number]>,
   skipDroppedTables: boolean,
   from: Snapshot,
-  droppedCaggs: Set<string>,
+  droppedRelations: Set<string>,
 ): boolean {
   if (comment.kind === 'function') {
     return !toFns.has(functionSignature(comment.schema, comment.name, comment.argTypes ?? []))
@@ -311,7 +337,7 @@ function skipCommentNull(
   if (comment.kind === 'trigger') return !toTriggers.has(comment.id)
   if (comment.kind === 'extension') return !toExt.has(comment.name)
   if (comment.kind === 'materializedView' || comment.kind === 'view') {
-    if (droppedCaggs.has(`${comment.schema}.${comment.name}`)) return true
+    if (droppedRelations.has(`${comment.schema}.${comment.name}`)) return true
   }
   return skipDroppedTables && targetGone(from, to, comment)
 }

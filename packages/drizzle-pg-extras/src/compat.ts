@@ -1,26 +1,13 @@
 /**
- * Small shims over drizzle-orm internals that moved between 0.x and 1.0.
+ * Column helpers over drizzle-orm 1.0 internals.
  *
- * - `Casing` is no longer exported from "drizzle-orm" in 1.0.
- * - `CasingCache` is gone from "drizzle-orm/casing" in 1.0; `toSnakeCase` and
- *   `toCamelCase` are still there in both.
- * - `PgDialect` no longer takes a `casing` option in 1.0 (casing moved to
- *   `pgTableCreator`, so column names are already resolved).
- * - `PgArray` is gone in 1.0; array columns are the base column with `dimensions`.
- * - `column.table` still exists at runtime in 1.0 but is no longer typed.
- *
- * Namespace imports are used on purpose: a named import of an export that does
- * not exist fails at module link time in ESM, so `PgArray` and `CasingCache`
- * can only be probed this way.
+ * - A column declared without a name (`keyAsName`) is named by drizzle-kit's `casing`
+ *   setting when kit writes the table, so these declarations follow the same rule.
+ * - `column.table` exists at runtime in 1.0 but is not typed.
  */
-import { is } from 'drizzle-orm'
-import * as casingModule from 'drizzle-orm/casing'
-import * as pgCore from 'drizzle-orm/pg-core'
+import { type Casing, toCamelCase, toSnakeCase } from 'drizzle-orm/casing'
 
-export type Casing = 'snake_case' | 'camelCase'
-
-const toSnakeCase = (casingModule as { toSnakeCase: (input: string) => string }).toSnakeCase
-const toCamelCase = (casingModule as { toCamelCase: (input: string) => string }).toCamelCase
+export type { Casing }
 
 interface NamedColumn {
   name: string
@@ -28,7 +15,7 @@ interface NamedColumn {
 }
 
 /**
- * Resolve a column's database name the way drizzle does: a column declared
+ * Resolve a column's database name the way drizzle-kit does: a column declared
  * without an explicit name (`keyAsName`) gets the configured casing applied to
  * its key; an explicitly named column keeps its name.
  */
@@ -37,36 +24,7 @@ export function columnDbName(column: NamedColumn, casing: Casing | undefined): s
   return casing === 'snake_case' ? toSnakeCase(column.name) : toCamelCase(column.name)
 }
 
-/** Same contract as drizzle 0.x's `CasingCache#getColumnCasing`, for both majors. */
-export class ColumnCasing {
-  constructor(private readonly casing: Casing | undefined) {}
-
-  getColumnCasing(column: NamedColumn): string {
-    return columnDbName(column, this.casing)
-  }
-}
-
-/** The table or view a column belongs to. Typed in 0.x, untyped (but present) in 1.0. */
+/** The table or view a column belongs to. Present at runtime in 1.0, but untyped. */
 export function columnTable(column: object): unknown {
   return (column as { table?: unknown }).table
-}
-
-type ArrayWrapper = { baseColumn: object }
-const PgArrayClass = (pgCore as Record<string, unknown>)['PgArray'] as
-  | (abstract new(...args: never[]) => ArrayWrapper)
-  | undefined
-
-/** Unwrap 0.x `PgArray` columns to their element column. 1.0 has no wrapper. */
-export function unwrapArrayColumn(column: object): object {
-  let current = column
-  if (!PgArrayClass) return current
-  // `is` bridges the 0.x wrapper class through an any cast; narrowing it is version-dependent.
-  // oxlint-disable-next-line typescript/no-explicit-any
-  while (is(current, PgArrayClass as any)) current = (current as ArrayWrapper).baseColumn
-  return current
-}
-
-/** Options for `new PgDialect()`; 1.0 dropped `casing`, and passing it there is a no-op. */
-export function dialectConfig(casing: Casing | undefined): Record<string, unknown> | undefined {
-  return casing ? { casing } : undefined
 }

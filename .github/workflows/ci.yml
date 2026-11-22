@@ -62,31 +62,23 @@ jobs:
       pull-requests: read
 
   test:
-    name: test (node ${{ matrix.node }}, drizzle 0.x)
+    name: test (node ${{ matrix.node }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         node: [22, 24]
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: extras
-          POSTGRES_PASSWORD: extras
-          POSTGRES_DB: drizzle_pg_extras
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -h localhost -U extras -d drizzle_pg_extras"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The suites boot Postgres and TimescaleDB in microVMs, which need the runner's KVM device.
+      - name: Grant KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
       - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -94,74 +86,6 @@ jobs:
       - uses: ./.github/actions/pnpm-store
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
-        env:
-          POSTGRES_URL: postgres://extras:extras@localhost:5432/drizzle_pg_extras
-
-  test-rc:
-    name: test (node 24, drizzle 1.0-rc)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: extras
-          POSTGRES_PASSWORD: extras
-          POSTGRES_DB: drizzle_pg_extras
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -h localhost -U extras -d drizzle_pg_extras"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 24
-      - uses: ./.github/actions/pnpm-store
-      # The rc install mutates this job's own dependency tree only (KTD3); this job runs tests only,
-      # so the mutation never feeds a static check — those run once, on the frozen lockfile.
-      - run: pnpm install --frozen-lockfile && pnpm add -D --filter @systemfsoftware/drizzle-pg-extras drizzle-orm@1.0.0-rc.5 drizzle-kit@1.0.0-rc.5
-      - run: pnpm test
-        env:
-          POSTGRES_URL: postgres://extras:extras@localhost:5432/drizzle_pg_extras
-
-  timescale:
-    name: test (timescaledb 2.32)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    services:
-      timescaledb:
-        image: timescale/timescaledb:2.32.1-pg16@sha256:5d7a2f9d9d593315368338aa6054fda37d7707b4a12a912e30dcb7523385e2b4
-        env:
-          POSTGRES_USER: extras
-          POSTGRES_PASSWORD: extras
-          POSTGRES_DB: drizzle_pg_extras
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -h localhost -U extras -d drizzle_pg_extras"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: 22
-      - uses: ./.github/actions/pnpm-store
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm test
-        env:
-          TIMESCALE_URL: postgres://extras:extras@localhost:5432/drizzle_pg_extras
 
   # The one check the ruleset requires and the Mergify queue gates on; the name matches the shared CI of the other
   # systemfsoftware repositories. List every other job in `needs`: a job left out is not gated. The job always runs,
@@ -171,21 +95,19 @@ jobs:
     name: checks / check
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [static-checks, changeset, test, test-rc, timescale]
+    needs: [static-checks, changeset, test]
     if: ${{ always() }}
     steps:
       - name: Require every job to succeed
         env:
           STATIC_CHECKS: ${{ needs.static-checks.result }}
           TEST: ${{ needs.test.result }}
-          TEST_RC: ${{ needs.test-rc.result }}
-          TIMESCALE: ${{ needs.timescale.result }}
           CHANGESET: ${{ needs.changeset.result }}
           EVENT: ${{ github.event_name }}
           HEAD_REF: ${{ github.head_ref }}
         run: |
           status=0
-          for pair in "static-checks:$STATIC_CHECKS" "test:$TEST" "test-rc:$TEST_RC" "timescale:$TIMESCALE"; do
+          for pair in "static-checks:$STATIC_CHECKS" "test:$TEST"; do
             case "$pair" in
               *:success) ;;
               *) echo "A required job finished as: $pair"; status=1 ;;

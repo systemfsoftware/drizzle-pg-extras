@@ -21,12 +21,15 @@ import {
   type UniqueConstraint,
   UniqueConstraintBuilder,
 } from 'drizzle-orm/pg-core'
-import { type Casing, ColumnCasing, columnTable, unwrapArrayColumn } from './compat.js'
+import { type Casing, columnDbName, columnTable } from './compat.js'
 import {
   type AnyPgEnum,
   assertColumnOfTable,
   type ContinuousAggregate,
+  declaredFunctionId,
   extrasKind,
+  functionReturnsSql,
+  functionTypeSql,
   type Hypertable,
   type PartitionBound,
   type PartitionedTable,
@@ -45,10 +48,13 @@ import {
   type TriggerInitially,
 } from './defs.js'
 import { PgExtrasError } from './errors.js'
-import { assertIdentifier, normalizeType, quoteIdent, quoteLiteral } from './quote.js'
+import { type GrantSnapshot, mergeGrants, normalizeGrantSnapshot, snapshotGrant } from './grant.js'
+import { assertIdentifier, quoteIdent, quoteLiteral } from './quote.js'
 import { isSqlFragment, renderSql } from './render-sql.js'
+import { normalizeViewSnapshot, snapshotViewDefinition, type ViewSnapshot } from './view.js'
 
 export type FunctionArgSnapshot = {
+  mode: 'in' | 'inout' | 'variadic' | 'out'
   name: string | null
   type: string
   defaultExpr: string | null
@@ -279,6 +285,8 @@ export type Snapshot = {
   detaches: DetachSnapshot[]
   hypertables: HypertableSnapshot[]
   continuousAggregates: ContinuousAggregateSnapshot[]
+  views: ViewSnapshot[]
+  grants: GrantSnapshot[]
   inventory: {
     scanned: boolean
     tables: InventoryTable[]
@@ -301,6 +309,8 @@ export function emptySnapshot(): Snapshot {
     detaches: [],
     hypertables: [],
     continuousAggregates: [],
+    views: [],
+    grants: [],
     inventory: { scanned: false, tables: [], enums: [], views: [], indexes: [], constraints: [] },
   }
 }
@@ -311,13 +321,12 @@ export function functionSignature(schema: string, name: string, argTypes: readon
 
 export function snapshotExtras(extras: PgExtras, options?: { casing?: Casing }): Snapshot {
   const casing = options?.casing
-  const cache = new ColumnCasing(casing)
-  const nameOf = (column: AnyPgColumn) => cache.getColumnCasing(column)
+  const nameOf = (column: AnyPgColumn) => columnDbName(column, casing)
 
   const functions: FunctionSnapshot[] = []
   const fnByObject = new Map<PgFunction, FunctionSnapshot>()
   for (const fn of extras.functions) {
-    const snap = snapshotFunction(fn, casing)
+    const snap = snapshotFunction(fn)
     pushFunction(functions, snap)
     fnByObject.set(fn, snap)
   }
@@ -424,7 +433,7 @@ export function snapshotExtras(extras: PgExtras, options?: { casing?: Casing }):
   const partitions = snapshotPartitions(extras, partitionedTables)
   const detaches = snapshotDetaches(extras, partitions)
   const hypertables = snapshotHypertables(extras, nameOf, partitionedTables, extensions)
-  const continuousAggregates = snapshotContinuousAggregates(extras, casing)
+  const continuousAggregates = snapshotContinuousAggregates(extras)
 
   functions.sort((a, b) => a.id.localeCompare(b.id))
   triggers.sort((a, b) => a.id.localeCompare(b.id))
@@ -435,6 +444,8 @@ export function snapshotExtras(extras: PgExtras, options?: { casing?: Casing }):
   detaches.sort((a, b) => a.id.localeCompare(b.id))
   hypertables.sort((a, b) => a.id.localeCompare(b.id))
   continuousAggregates.sort((a, b) => a.id.localeCompare(b.id))
+  const views = snapshotViews(extras)
+  const grants = mergeGrants(extras.grants.map((grant) => snapshotGrant(grant)))
 
   const triggerIds = new Set<string>()
   for (const trigger of triggers) {
@@ -457,6 +468,8 @@ export function snapshotExtras(extras: PgExtras, options?: { casing?: Casing }):
     detaches,
     hypertables,
     continuousAggregates,
+    views,
+    grants,
     inventory: {
       scanned: true,
       tables: inventoryTables,
@@ -494,19 +507,20 @@ function pushComment(comments: CommentSnapshot[], snap: CommentSnapshot): void {
   }
 }
 
-function snapshotFunction(fn: PgFunction, casing: Casing | undefined): FunctionSnapshot {
+function snapshotFunction(fn: PgFunction): FunctionSnapshot {
   const args = fn.args.map((arg) => ({
+    mode: arg.mode ?? 'in',
     name: arg.name ?? null,
-    type: typeOf(arg.type),
-    defaultExpr: arg.default ?? null,
+    type: functionTypeSql(arg.type),
+    defaultExpr: ('default' in arg ? arg.default : undefined) ?? null,
   }))
-  const body = normalizeBody(fn.body, casing)
+  const body = normalizeBody(fn.body)
   return {
-    id: functionSignature(fn.schema, fn.name, args.map((arg) => arg.type)),
+    id: functionSignature(fn.schema, fn.name, identityArgTypes(args)),
     name: fn.name,
     schema: fn.schema,
     args,
-    returns: typeOf(fn.returns),
+    returns: functionReturnsSql(fn.returns),
     language: fn.language,
     body,
     volatility: fn.volatility,
@@ -514,6 +528,11 @@ function snapshotFunction(fn: PgFunction, casing: Casing | undefined): FunctionS
     searchPath: fn.searchPath ? [...fn.searchPath] : null,
     strict: fn.strict,
   }
+}
+
+/** The argument types Postgres identifies a function by: every argument except `OUT`. */
+export function identityArgTypes(args: readonly FunctionArgSnapshot[]): string[] {
+  return args.filter((arg) => arg.mode !== 'out').map((arg) => arg.type)
 }
 
 function ownedUpdatedAt(trigger: PgTrigger, nameOf: (column: AnyPgColumn) => string): FunctionSnapshot | null {
@@ -562,7 +581,7 @@ function snapshotTrigger(
     functionId = owned.id
   } else if (trigger.function && extrasKind(trigger.function) === 'function') {
     const snap = fnByObject.get(trigger.function as PgFunction) ??
-      snapshotFunction(trigger.function as PgFunction, casing)
+      snapshotFunction(trigger.function as PgFunction)
     functionSchema = snap.schema
     functionName = snap.name
     functionId = snap.id
@@ -591,7 +610,7 @@ function snapshotTrigger(
     when,
     functionSchema,
     functionName,
-    functionArgsSql: trigger.args.map((arg) => renderTriggerArg(arg, casing, nameOf)),
+    functionArgsSql: trigger.args.map((arg) => renderTriggerArg(arg, nameOf)),
     functionId,
     constraint: trigger.constraint,
     deferrable: trigger.deferrable,
@@ -606,7 +625,6 @@ function snapshotTrigger(
 
 function renderTriggerArg(
   arg: TriggerArg,
-  casing: Casing | undefined,
   nameOf: (column: AnyPgColumn) => string,
 ): string {
   if (typeof arg === 'string') return quoteLiteral(arg)
@@ -616,7 +634,7 @@ function renderTriggerArg(
   }
   if (typeof arg === 'boolean') return arg ? 'TRUE' : 'FALSE'
   if (isSqlFragment(arg)) {
-    const text = renderSql(arg, casing).trim()
+    const text = renderSql(arg).trim()
     if (text.includes(';')) throw new PgExtrasError('trigger argument SQL cannot contain ";"')
     return text
   }
@@ -626,13 +644,8 @@ function renderTriggerArg(
   throw new PgExtrasError('trigger argument must be a string, number, boolean, column, or sql fragment')
 }
 
-function typeOf(type: PgFunction['returns']): string {
-  if (typeof type === 'string') return normalizeType(type)
-  return normalizeType(type.getSQLType())
-}
-
-function normalizeBody(body: string | SQL, casing: Casing | undefined): string {
-  const text = typeof body === 'string' ? body : renderSql(body, casing)
+function normalizeBody(body: string | SQL): string {
+  const text = typeof body === 'string' ? body : renderSql(body)
   return text.replace(/^\n+/, '').replace(/\s+$/, '')
 }
 
@@ -679,7 +692,7 @@ function snapshotComment(
   }
   if (extrasKind(target) === 'function') {
     const fn = target as PgFunction
-    const snap = fnByObject.get(fn) ?? snapshotFunction(fn, casing)
+    const snap = fnByObject.get(fn) ?? snapshotFunction(fn)
     return functionComment(snap, comment.text)
   }
   if (extrasKind(target) === 'trigger') {
@@ -747,6 +760,16 @@ function triggerShape(trigger: TriggerSnapshot, includeEnabled: boolean) {
   }
 }
 
+function normalizeFunction(value: FunctionSnapshot): FunctionSnapshot {
+  const args = value.args.map((arg) => ({
+    mode: arg.mode ?? 'in',
+    name: arg.name ?? null,
+    type: arg.type,
+    defaultExpr: arg.defaultExpr ?? null,
+  }))
+  return { ...value, args }
+}
+
 function normalizeTrigger(value: unknown): TriggerSnapshot {
   if (!value || typeof value !== 'object') throw new PgExtrasError('pg extras snapshot trigger is not an object')
   const raw = value as Partial<TriggerSnapshot>
@@ -800,7 +823,7 @@ export function parseSnapshot(value: unknown): Snapshot {
   const comments = Array.isArray(record.comments) ? record.comments.map((comment) => normalizeComment(comment)) : []
   return {
     version: 1,
-    functions: record.functions ?? [],
+    functions: Array.isArray(record.functions) ? record.functions.map((fn) => normalizeFunction(fn)) : [],
     triggers: Array.isArray(record.triggers) ? record.triggers.map((trigger) => normalizeTrigger(trigger)) : [],
     extensions: record.extensions ?? [],
     comments,
@@ -813,8 +836,32 @@ export function parseSnapshot(value: unknown): Snapshot {
     continuousAggregates: Array.isArray(record.continuousAggregates)
       ? record.continuousAggregates.map((aggregate) => normalizeContinuousAggregateSnapshot(aggregate))
       : [],
+    views: Array.isArray(record.views) ? record.views.map((view) => normalizeViewSnapshot(view)) : [],
+    grants: Array.isArray(record.grants) ? record.grants.map((grant) => normalizeGrantSnapshot(grant)) : [],
     inventory: normalizeInventory(record.inventory),
   }
+}
+
+function snapshotViews(extras: PgExtras): ViewSnapshot[] {
+  const views: ViewSnapshot[] = []
+  for (const definition of extras.viewDefinitions) {
+    const snap = snapshotViewDefinition(definition)
+    if (views.some((view) => view.id === snap.id)) {
+      throw new PgExtrasError(`view ${snap.schema}.${snap.name} is defined more than once`)
+    }
+    views.push(snap)
+  }
+  const functionIds = new Set(extras.functions.map((fn) => declaredFunctionId(fn)))
+  for (const view of views) {
+    for (const id of view.functions) {
+      if (!functionIds.has(id)) {
+        throw new PgExtrasError(
+          `view ${view.schema}.${view.name} calls a function that is not declared. Export the pgFunction() from the schema`,
+        )
+      }
+    }
+  }
+  return views.sort((a, b) => a.id.localeCompare(b.id))
 }
 
 function normalizeHypertableSnapshot(value: unknown): HypertableSnapshot {
@@ -1056,7 +1103,7 @@ function viewComment(schema: string, name: string, materialized: boolean, text: 
 }
 
 function functionComment(fn: FunctionSnapshot, text: string): CommentSnapshot {
-  const argTypes = fn.args.map((arg) => arg.type)
+  const argTypes = identityArgTypes(fn.args)
   return {
     id: JSON.stringify(['function', fn.schema, fn.name, argTypes]),
     kind: 'function',
@@ -1336,9 +1383,7 @@ function enumObjectsIn(extras: PgExtras): AnyPgEnum[] {
 }
 
 function enumFromColumn(column: AnyPgColumn): AnyPgEnum | null {
-  let current: object = column
-  current = unwrapArrayColumn(current)
-  if (is(current, PgEnumColumn) || is(current, PgEnumObjectColumn)) return current.enum as AnyPgEnum
+  if (is(column, PgEnumColumn) || is(column, PgEnumObjectColumn)) return column.enum as AnyPgEnum
   return null
 }
 
@@ -1423,17 +1468,14 @@ function snapshotHypertable(hypertable: Hypertable, nameOf: (column: AnyPgColumn
   }
 }
 
-function snapshotContinuousAggregates(
-  extras: PgExtras,
-  casing: Casing | undefined,
-): ContinuousAggregateSnapshot[] {
+function snapshotContinuousAggregates(extras: PgExtras): ContinuousAggregateSnapshot[] {
   const aggregates: ContinuousAggregateSnapshot[] = []
   for (const aggregate of extras.continuousAggregates) {
     const snap: ContinuousAggregateSnapshot = {
       id: JSON.stringify(['continuousAggregate', aggregate.schema, aggregate.name]),
       schema: aggregate.schema,
       name: aggregate.name,
-      query: typeof aggregate.query === 'string' ? aggregate.query : renderSql(aggregate.query, casing),
+      query: typeof aggregate.query === 'string' ? aggregate.query : renderSql(aggregate.query),
       source: aggregate.source ? sourceIdentity(aggregate.source) : null,
       realTime: aggregate.realTime,
       chunkInterval: aggregate.chunkInterval,

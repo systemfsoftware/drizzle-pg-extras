@@ -1,29 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import path from 'node:path'
 import { PgExtrasError } from './errors.js'
 import type { Snapshot } from './snapshot.js'
 
 export const BREAKPOINT = '--> statement-breakpoint'
-const ORIGIN_ID = '00000000-0000-0000-0000-000000000000'
 export const EXTRAS_SNAPSHOT = '_pg-extras.json'
-
-export type MigrationPrefix = 'index' | 'timestamp' | 'supabase' | 'unix' | 'none'
-
-export type JournalEntry = {
-  idx: number
-  version: string
-  when: number
-  tag: string
-  breakpoints: boolean
-}
-
-export type Journal = {
-  version: string
-  dialect: string
-  entries: JournalEntry[]
-}
 
 export type WriteMigrationInput = {
   out: string
@@ -31,15 +13,12 @@ export type WriteMigrationInput = {
   up: string
   down: string
   snapshot: Snapshot
-  prefix?: MigrationPrefix
-  breakpoints?: boolean
 }
 
 export type WrittenMigration = {
   tag: string
   sqlPath: string
   downPath: string
-  layout: 'journal' | 'v1'
 }
 
 export function joinStatements(statements: readonly string[], breakpoints: boolean, header: string): string {
@@ -81,189 +60,67 @@ export function sanitizeMigrationName(name: string): string {
 export function writeMigration(input: WriteMigrationInput): WrittenMigration {
   const out = path.resolve(input.out)
   mkdirSync(out, { recursive: true })
-  const layout = detectLayout(out)
-  const written = layout === 'v1' ? writeV1(out, input) : writeJournal(out, input)
+  if (existsSync(path.join(out, 'meta', '_journal.json'))) {
+    throw new PgExtrasError(
+      `migrations folder ${out} uses the drizzle-kit 0.x journal layout. Run \`drizzle-kit up\` with drizzle-kit 1.0 to convert it first.`,
+    )
+  }
+  const written = writeFolder(out, input)
   writeFileSync(extrasSnapshotPath(out), `${JSON.stringify(input.snapshot, null, 2)}\n`)
   return written
 }
 
-function detectLayout(out: string): 'journal' | 'v1' {
-  if (!existsSync(out)) return 'journal'
-  const entries = readdirSync(out, { withFileTypes: true })
-  const v1 = entries.filter(
-    (entry) =>
-      entry.isDirectory() &&
-      /^\d{14}_/.test(entry.name) &&
-      existsSync(path.join(out, entry.name, 'migration.sql')),
-  )
-  const journal = existsSync(path.join(out, 'meta', '_journal.json'))
-  if (v1.length > 0 && journal) {
+/**
+ * The snapshot that chains a new migration after the last one: what `drizzle-kit generate --custom`
+ * writes for a migration with no schema change. drizzle-kit 1.0 stores one base snapshot, then diffs
+ * chained through prevIds. A first migration in an empty folder has none; kit writes its base later.
+ * Read before anything is written, so a folder kit 1.0 cannot read is refused untouched.
+ */
+function nextSnapshot(previous: string | null): Record<string, unknown> | null {
+  if (!previous || !existsSync(previous)) return null
+  const parsed = JSON.parse(readFileSync(previous, 'utf8')) as Record<string, unknown>
+  if (typeof parsed.id !== 'string' || (parsed.type !== 'base' && parsed.type !== 'diff')) {
     throw new PgExtrasError(
-      `migrations folder ${out} has both meta/_journal.json and v1 migration folders. Keep one layout.`,
+      `${previous} is not a drizzle-kit 1.0 snapshot. Run \`drizzle-kit up\` with drizzle-kit 1.0 to convert it first.`,
     )
   }
-  if (v1.length > 0) return 'v1'
-  if (journal) return 'journal'
-  // An empty folder: follow the installed drizzle-kit. 1.0 only reads folder-per-migration.
-  return installedKitMajor() >= 1 ? 'v1' : 'journal'
+  return {
+    type: 'diff',
+    version: parsed.version,
+    dialect: parsed.dialect,
+    id: randomUUID(),
+    prevIds: [parsed.id],
+    footprints: [],
+    deltas: [],
+  }
 }
 
-function installedKitMajor(): number {
-  for (const name of ['drizzle-kit', 'drizzle-orm']) {
-    try {
-      const require = createRequire(path.join(process.cwd(), 'noop.js'))
-      let dir = path.dirname(require.resolve(name))
-      for (let i = 0; i < 6; i += 1) {
-        const pkgPath = path.join(dir, 'package.json')
-        if (existsSync(pkgPath)) {
-          const pkg = JSON.parse(readFileSync(pkgPath, 'utf8')) as { name?: string; version?: string }
-          if (pkg.name === name && pkg.version) return Number.parseInt(pkg.version, 10)
-        }
-        dir = path.dirname(dir)
-      }
-    } catch {
-      // not installed from this project; try the next one
-    }
-  }
-  return 0
-}
-
-function writeJournal(out: string, input: WriteMigrationInput): WrittenMigration {
-  const prefixMode = input.prefix ?? 'index'
-  if (prefixMode === 'none') {
-    throw new PgExtrasError(
-      'migrations.prefix "none" is not supported. Use "index", "timestamp", "supabase", or "unix".',
-    )
-  }
-  const meta = path.join(out, 'meta')
-  mkdirSync(meta, { recursive: true })
-  const journalPath = path.join(meta, '_journal.json')
-  const journal = existsSync(journalPath) ? readJournal(journalPath) : emptyJournal()
-  if (journal.dialect !== 'postgresql') {
-    throw new PgExtrasError(`drizzle-pg-extras only writes postgresql migrations. This journal is ${journal.dialect}.`)
-  }
-  const last = journal.entries[journal.entries.length - 1]
-  const idx = last ? last.idx + 1 : 0
-  const when = Math.max(Date.now(), last ? last.when + 1 : 0)
-  const prefix = migrationPrefix(idx, prefixMode)
-  const suffix = sanitizeMigrationName(input.name)
-  const tag = `${prefix}_${suffix}`
-  if (journal.entries.some((entry) => entry.tag === tag) || existsSync(path.join(out, `${tag}.sql`))) {
-    throw new PgExtrasError(`migration ${tag} already exists in ${out}`)
-  }
-  const breakpoints = input.breakpoints ?? true
-  const kitSnapshot = nextKitSnapshot(readLatestKitSnapshot(meta))
-  writeFileSync(path.join(meta, `${prefix}_snapshot.json`), `${JSON.stringify(kitSnapshot, null, 2)}\n`)
-  journal.entries.push({ idx, version: '7', when, tag, breakpoints })
-  writeFileSync(journalPath, `${JSON.stringify(journal, null, 2)}\n`)
-  const sqlPath = path.join(out, `${tag}.sql`)
-  const downPath = path.join(out, `${tag}.down.sql`)
-  writeFileSync(sqlPath, input.up)
-  writeFileSync(downPath, input.down)
-  return { tag, sqlPath, downPath, layout: 'journal' }
-}
-
-function writeV1(out: string, input: WriteMigrationInput): WrittenMigration {
+function writeFolder(out: string, input: WriteMigrationInput): WrittenMigration {
   const folders = readdirSync(out, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && /^\d{14}_/.test(entry.name))
     .map((entry) => entry.name)
     .sort()
   const suffix = sanitizeMigrationName(input.name)
   let stamp = utcStamp(new Date())
-  // drizzle-kit orders v1 folders by name, so this one must sort after the last one,
+  // drizzle-kit orders migration folders by name, so this one must sort after the last one,
   // even when both were written in the same second.
-  const lastStamp = folders.length > 0 ? folders[folders.length - 1]!.slice(0, 14) : null
+  const last = folders.at(-1)
+  const lastStamp = last ? last.slice(0, 14) : null
   if (lastStamp && stamp <= lastStamp) stamp = bumpStamp(lastStamp)
   let folder = `${stamp}_${suffix}`
   while (existsSync(path.join(out, folder))) {
     stamp = bumpStamp(stamp)
     folder = `${stamp}_${suffix}`
   }
+  const next = nextSnapshot(last ? path.join(out, last, 'snapshot.json') : null)
   const dir = path.join(out, folder)
   mkdirSync(dir, { recursive: true })
   const sqlPath = path.join(dir, 'migration.sql')
   const downPath = path.join(dir, 'down.sql')
   writeFileSync(sqlPath, input.up)
   writeFileSync(downPath, input.down)
-  const previous = folders.length > 0 ? path.join(out, folders[folders.length - 1]!, 'snapshot.json') : null
-  if (previous && existsSync(previous)) {
-    const parsed = JSON.parse(readFileSync(previous, 'utf8')) as Record<string, unknown>
-    let next: Record<string, unknown> = parsed
-    if (typeof parsed.id === 'string') {
-      if (parsed.type === 'base' || parsed.type === 'diff') {
-        // drizzle-kit 1.0 stores one base snapshot, then diffs chained through prevIds.
-        // This is what `drizzle-kit generate --custom` writes for a migration with no schema change.
-        next = {
-          type: 'diff',
-          version: parsed.version,
-          dialect: parsed.dialect,
-          id: randomUUID(),
-          prevIds: [parsed.id],
-          footprints: [],
-          deltas: [],
-        }
-      } else {
-        const { id, prevId: _previous, ...rest } = parsed
-        next = { id: randomUUID(), prevId: id, ...rest }
-      }
-    }
-    writeFileSync(path.join(dir, 'snapshot.json'), `${JSON.stringify(next, null, 2)}\n`)
-  }
-  return { tag: folder, sqlPath, downPath, layout: 'v1' }
-}
-
-function emptyJournal(): Journal {
-  return { version: '7', dialect: 'postgresql', entries: [] }
-}
-
-function readJournal(file: string): Journal {
-  const parsed = JSON.parse(readFileSync(file, 'utf8')) as Partial<Journal>
-  if (!parsed || !Array.isArray(parsed.entries) || typeof parsed.dialect !== 'string') {
-    throw new PgExtrasError(`${file} is not a drizzle-kit journal`)
-  }
-  return {
-    version: typeof parsed.version === 'string' ? parsed.version : '7',
-    dialect: parsed.dialect,
-    entries: parsed.entries,
-  }
-}
-
-function readLatestKitSnapshot(meta: string): Record<string, unknown> | null {
-  if (!existsSync(meta)) return null
-  const files = readdirSync(meta)
-    .filter((file) => !file.startsWith('_') && file.endsWith('.json'))
-    .sort()
-  const latest = files[files.length - 1]
-  if (!latest) return null
-  return JSON.parse(readFileSync(path.join(meta, latest), 'utf8')) as Record<string, unknown>
-}
-
-function nextKitSnapshot(prev: Record<string, unknown> | null): Record<string, unknown> {
-  if (!prev || typeof prev.id !== 'string') {
-    return {
-      id: randomUUID(),
-      prevId: ORIGIN_ID,
-      version: '7',
-      dialect: 'postgresql',
-      tables: {},
-      enums: {},
-      schemas: {},
-      sequences: {},
-      roles: {},
-      policies: {},
-      views: {},
-      _meta: { columns: {}, schemas: {}, tables: {} },
-    }
-  }
-  const { id, prevId: _previous, ...rest } = prev
-  return { id: randomUUID(), prevId: id, ...rest }
-}
-
-function migrationPrefix(idx: number, mode: MigrationPrefix): string {
-  if (mode === 'index') return String(idx).padStart(4, '0')
-  if (mode === 'unix') return String(Math.floor(Date.now() / 1000))
-  if (mode === 'timestamp' || mode === 'supabase') return utcStamp(new Date())
-  return ''
+  if (next) writeFileSync(path.join(dir, 'snapshot.json'), `${JSON.stringify(next, null, 2)}\n`)
+  return { tag: folder, sqlPath, downPath }
 }
 
 function utcStamp(date: Date): string {

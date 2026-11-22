@@ -27,7 +27,7 @@
     "hypertable"
   ],
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19.0"
   },
   "bin": {
     "drizzle-pg-extras": "./dist/cli.js"
@@ -57,14 +57,15 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "f=${OXLINT_FORMAT:-${AGENT:+agent}}; effect-tsgo oxlint . --type-aware --format=${f:-default}",
+    "lint": "f=${OXLINT_FORMAT:-${AGENT:+agent}}; oxlint . --type-aware --format=${f:-default}",
+    "pretest": "pnpm run build",
     "test": "vitest run",
     "prepare": "pnpm run build",
     "prepublishOnly": "pnpm run build"
   },
   "peerDependencies": {
-    "drizzle-kit": ">=0.31.0 || >=1.0.0-0",
-    "drizzle-orm": ">=0.36.4 || >=1.0.0-0"
+    "drizzle-kit": ">=1.0.0-rc.6",
+    "drizzle-orm": ">=1.0.0-rc.6"
   },
   "peerDependenciesMeta": {
     "drizzle-kit": {
@@ -76,19 +77,23 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
-    "@effect/tsgo": "^0.70.0",
+    "@effect/platform-node": "^4.1.5",
+    "@systemfsoftware/effect-gherkin-spec": "^8.3.2",
+    "@systemfsoftware/effect-microsandbox": "^6.1.0",
+    "@systemfsoftware/effect-readiness": "^1.1.4",
     "@systemfsoftware/oxlint-config-recommended": "^8.0.3",
+    "@systemfsoftware/vitest": "^4.1.3",
     "@types/node": "^22.19.1",
     "@types/pg": "^8.15.6",
-    "drizzle-kit": "^0.31.11",
-    "drizzle-orm": "^0.45.3",
-    "effect": "^4.1.4",
+    "drizzle-kit": "1.0.0-rc.6",
+    "drizzle-orm": "1.0.0-rc.6",
+    "effect": "^4.1.5",
     "oxlint": "~1.93.0",
     "oxlint-tsgolint": "7.0.2007",
     "pg": "^8.16.3",
     "publint": "^0.3.25",
     "tsdown": "^0.23.7",
     "typescript": "^5.9.3",
-    "vitest": "^3.2.4"
+    "vitest": "^5.1.1"
   }
 }
