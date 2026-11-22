@@ -1,12 +1,15 @@
-# timescale-drizzle
+# @systemfsoftware/timescale-drizzle
 
-Declare the Postgres objects Drizzle can't model yet, next to your Drizzle tables, and get ordinary SQL migration files for them: functions, triggers, comments, extensions, partitioned tables, and TimescaleDB hypertables and continuous aggregates.
+[![npm version](https://img.shields.io/npm/v/@systemfsoftware/timescale-drizzle)](https://www.npmjs.com/package/@systemfsoftware/timescale-drizzle)
+[![CI](https://github.com/systemfsoftware/timescale-drizzle/actions/workflows/ci.yml/badge.svg)](https://github.com/systemfsoftware/timescale-drizzle/actions/workflows/ci.yml)
 
-`drizzle-kit migrate` applies those files like any other migration. Nothing in Drizzle is patched, so if Drizzle later learns to generate one of these objects itself, the SQL you already committed stays valid.
+Drizzle ORM cannot yet model several Postgres objects. timescale-drizzle lets you declare them next to your Drizzle tables: functions, triggers, comments, extensions, partitioned tables, and TimescaleDB hypertables and continuous aggregates. `timescale-drizzle generate` writes plain SQL migration files for them, and `drizzle-kit migrate` applies those files like any other migration.
+
+It does not modify `drizzle-orm` or `drizzle-kit`, so the SQL you commit stays valid if Drizzle later generates the same object itself.
 
 ## Example
 
-A TimescaleDB hypertable with a columnstore and retention, declared in the same schema file as the table:
+A TimescaleDB hypertable with a columnstore and retention, declared in the same schema file as its table:
 
 ```ts
 import { hypertable, pgExtension } from '@systemfsoftware/timescale-drizzle'
@@ -29,19 +32,16 @@ export const metricsHypertable = hypertable(metrics, {
 })
 ```
 
-```sh
-drizzle-kit generate && timescale-drizzle generate && drizzle-kit migrate
-```
-
-The first `generate` writes a migration with `CREATE EXTENSION`, `create_hypertable` and the policy calls. The next one writes nothing until a declaration changes, and then only the difference, with a matching down file.
-
-## Install
+## Quick start
 
 ```sh
 npm install @systemfsoftware/timescale-drizzle
+drizzle-kit generate && timescale-drizzle generate && drizzle-kit migrate
 ```
 
-It needs `drizzle-orm` 0.36.4 or newer, including 1.0, and Node.js 18 or newer. `drizzle-kit` 0.31 or 1.0 applies the migrations. Add the CLI to your scripts and run `check` in CI, where it exits 1 when a declaration changed and no migration was written:
+The first `generate` writes a migration with `CREATE EXTENSION`, `create_hypertable` and the policy calls. The next `generate` writes nothing until a declaration changes, and then writes only the difference, with a matching `down.sql`.
+
+Add the CLI to your scripts, and run `timescale-drizzle check` in CI. It exits 1 when a declaration changed and no migration was written:
 
 ```json
 {
@@ -53,6 +53,17 @@ It needs `drizzle-orm` 0.36.4 or newer, including 1.0, and Node.js 18 or newer. 
 }
 ```
 
+## Requirements
+
+- Node.js 20.19 or newer. CI runs on Node.js 22 and 24.
+- `drizzle-orm` 1.0.0-rc.6 or newer (a peer dependency). Drizzle 0.x is not supported.
+- `drizzle-kit` 1.0.0-rc.6 or newer, optional, needed only to apply migrations.
+- PostgreSQL 14 or newer. CI tests PostgreSQL 17.
+- TimescaleDB, only if you declare hypertables, columnstores, retention or continuous aggregates.
+
+> [!NOTE]
+> `nix.systemfsoftware.com` is the package registry for this project's Nix outputs: `nix build` pulls them from its binary cache. npm publishes the library.
+
 ## What it covers
 
 | Object                 | Drizzle request                                                             | Docs                                                                      |
@@ -63,16 +74,38 @@ It needs `drizzle-orm` 0.36.4 or newer, including 1.0, and Node.js 18 or newer. 
 | Partitioned tables     | [drizzle-orm#2854](https://github.com/drizzle-team/drizzle-orm/issues/2854) | [Partitioning](packages/timescale-drizzle/README.md#partitioning)         |
 | TimescaleDB            | [drizzle-orm#2962](https://github.com/drizzle-team/drizzle-orm/issues/2962) | [TimescaleDB](packages/timescale-drizzle/README.md#timescaledb)           |
 
-The [package README](packages/timescale-drizzle/README.md) is the full reference: the files `generate` writes for drizzle-kit 0.31 and 1.0, the limits of each object, `drizzle-kit push`, and what is not supported yet.
+The [package README](packages/timescale-drizzle/README.md) is the full reference: the files `generate` writes for drizzle-kit 1.0, the limits of each object, `drizzle-kit push`, and what is not supported yet.
 
 ## Compatibility
 
-Tested with drizzle-orm 0.45 and 1.0.0-rc.5, drizzle-kit 0.31 and 1.0.0-rc.5, PostgreSQL 16 (14 or newer is required), and TimescaleDB 2.32 on PostgreSQL 16. CI runs the integration tests against real Postgres and TimescaleDB servers.
+| Dependency  | Supported                                   | Tested                                                             |
+| ----------- | ------------------------------------------- | ------------------------------------------------------------------ |
+| drizzle-orm | 1.0.0-rc.6 or newer                         | 1.0.0-rc.6                                                         |
+| drizzle-kit | 1.0.0-rc.6 or newer (folder-per-migration)  | 1.0.0-rc.6                                                         |
+| PostgreSQL  | 14 or newer                                 | 17                                                                 |
+| TimescaleDB | Hypertables, columnstore, retention, continuous aggregates | The TimescaleDB in the pinned `timescaledb-ha:pg17` image |
+| Node.js     | 20.19 or newer                              | 22 and 24                                                          |
+
+## Migrating from drizzle-pg-extras
+
+> [!NOTE]
+> Until 0.9.0 this package was published as `@systemfsoftware/drizzle-pg-extras`. It was renamed to match the repository, and the old package gets no further releases. Install and import `@systemfsoftware/timescale-drizzle`.
+> The API names (`defineExtras`, `PgExtras`, `PgExtrasError`) and the `_pg-extras.json` snapshot file are unchanged. The CLI is `timescale-drizzle`.
+
+## Repository
+
+This repository is a pnpm workspace. It holds one publishable package:
+
+- [`packages/timescale-drizzle`](packages/timescale-drizzle) is the library and CLI, published to npm as `@systemfsoftware/timescale-drizzle`.
 
 ## Contributing
 
 Development setup, tests and releases: [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Support
+
+Report bugs and request features on the [GitHub issue tracker](https://github.com/systemfsoftware/timescale-drizzle/issues).
+
 ## License
 
-[Apache-2.0](packages/timescale-drizzle/LICENSE)
+Apache-2.0. See [LICENSE](packages/timescale-drizzle/LICENSE).
