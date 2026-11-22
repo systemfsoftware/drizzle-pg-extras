@@ -31,6 +31,7 @@ import {
   functionReturnsSql,
   functionTypeSql,
   type Hypertable,
+  hypertableRelation,
   type PartitionBound,
   type PartitionedTable,
   type PgComment,
@@ -1436,7 +1437,7 @@ function snapshotHypertables(
 }
 
 function snapshotHypertable(hypertable: Hypertable, nameOf: (column: AnyPgColumn) => string): HypertableSnapshot {
-  const identity = tableIdentity(hypertable.table)
+  const identity = tableIdentity(hypertableRelation(hypertable))
   const columnName = (column: Hypertable['timeColumn']) => (typeof column === 'string' ? column : nameOf(column))
   return {
     id: JSON.stringify(['hypertable', identity.schema, identity.name]),
@@ -1520,7 +1521,7 @@ function sourceIdentity(source: ContinuousAggregate['source']): ContinuousAggreg
   if (!source) return null
   if (extrasKind(source) === 'hypertable') {
     const hypertable = source as Hypertable
-    const identity = tableIdentity(hypertable.table)
+    const identity = tableIdentity(hypertableRelation(hypertable))
     return { kind: 'hypertable', schema: identity.schema, name: identity.name }
   }
   if (extrasKind(source) === 'continuousAggregate') {

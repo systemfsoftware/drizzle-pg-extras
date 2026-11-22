@@ -1,4 +1,14 @@
-import { Column, ColumnBuilder, type ColumnBuilderBase, getTableColumns, is, SQL, sql, Table } from 'drizzle-orm'
+import {
+  Column,
+  ColumnBuilder,
+  type ColumnBuilderBase,
+  getTableColumns,
+  type InferSelectModel,
+  is,
+  SQL,
+  sql,
+  Table,
+} from 'drizzle-orm'
 import {
   type AnyPgColumn,
   CheckBuilder,
@@ -14,6 +24,7 @@ import {
   ManualMaterializedViewBuilder,
   ManualViewBuilder,
   MaterializedViewBuilder,
+  type PgColumn,
   PgColumnBuilder,
   type PgEnum,
   type PgEnumObject,
@@ -21,6 +32,7 @@ import {
   PgTable,
   type PgView,
   PrimaryKeyBuilder,
+  type SubqueryWithSelection,
   UniqueConstraintBuilder,
   UniqueOnConstraintBuilder,
   ViewBuilder,
@@ -29,11 +41,21 @@ import { type Casing, columnDbName, columnTable } from './compat.js'
 import { PgExtrasError } from './errors.js'
 import type { PgGrant } from './grant.js'
 import { assertIdentifier, normalizeType, quoteIdent } from './quote.js'
+import {
+  type AnyPgDatabase,
+  type BoundedSource,
+  boundedSubquery,
+  type Latest,
+  type LatestOptions,
+  latestRow,
+  type TimeBounds,
+} from './read.js'
 import { renderSql } from './render-sql.js'
 import type { PgViewDefinition } from './view.js'
 
 export const KIND = Symbol.for('timescale-drizzle.kind')
 const COMMENT = Symbol.for('timescale-drizzle.comment')
+const RELATION = Symbol.for('timescale-drizzle.relation')
 
 export type ExtrasKind =
   | 'function'
@@ -279,13 +301,13 @@ export type HypertableColumnstorePolicy = {
   timezone: string | null
 }
 
-/**
- * A drizzle-kit table that `generate` turns into a TimescaleDB hypertable.
- * The table stays in the Drizzle schema. The migration calls `create_hypertable`.
- */
-export type Hypertable = {
+export type NamedTable = { name: string; schema?: string }
+
+type ColumnOf<TTable extends PgTable> = TTable['_']['columns'][keyof TTable['_']['columns']]
+
+export type HypertableDeclaration = {
   readonly [KIND]: 'hypertable'
-  readonly table: PgTable | { name: string; schema?: string }
+  readonly [RELATION]: PgTable | NamedTable
   readonly timeColumn: AnyPgColumn | string
   readonly chunkTimeInterval: string | null
   readonly partitioningColumn: AnyPgColumn | string | null
@@ -297,6 +319,30 @@ export type Hypertable = {
   readonly columnstorePolicy: HypertableColumnstorePolicy | null
   readonly reorder: string | null
 }
+
+export type HypertableReads<TTable extends PgTable, TTime extends AnyPgColumn> = {
+  within<TAlias extends string = TTable['_']['name']>(
+    bounds: TimeBounds<TTime>,
+    options?: { readonly as?: TAlias },
+  ): SubqueryWithSelection<TTable['_']['columns'], TAlias>
+  latest(
+    db: AnyPgDatabase,
+    options?: LatestOptions<TTable['_']['columns']>,
+  ): Promise<Latest<InferSelectModel<TTable>>>
+  unsafeUnbounded(): TTable
+}
+
+/**
+ * A TimescaleDB hypertable that `generate` creates from a drizzle-kit table.
+ *
+ * It is not a Drizzle table, so `db.select().from(hypertable)` does not compile. Read it
+ * through `within`, which bounds the time column, or `latest`. `unsafeUnbounded()` returns
+ * the plain table for migrations and admin code.
+ */
+export type Hypertable<
+  TTable extends PgTable | NamedTable = PgTable | NamedTable,
+  TTime extends AnyPgColumn = TTable extends PgTable ? ColumnOf<TTable> : AnyPgColumn,
+> = HypertableDeclaration & (TTable extends PgTable ? HypertableReads<TTable, TTime> : unknown)
 
 export type ContinuousAggregateSource = Hypertable | ContinuousAggregate
 
@@ -312,9 +358,9 @@ export type ContinuousAggregateRefreshPolicy = {
   refreshNewestFirst: boolean | null
 }
 
-export type ContinuousAggregate = {
+export type ContinuousAggregateDeclaration = {
   readonly [KIND]: 'continuousAggregate'
-  readonly view: PgViewLike | null
+  readonly [RELATION]: PgViewLike | null
   readonly name: string
   readonly schema: string
   readonly query: string | SQL
@@ -327,6 +373,29 @@ export type ContinuousAggregate = {
   readonly columnstorePolicy: HypertableColumnstorePolicy | null
   readonly retention: HypertableRetention | null
 }
+
+type BucketColumn<TView extends PgViewLike, TKey extends keyof TView['_']['selectedFields']> =
+  TView['_']['selectedFields'][TKey] extends AnyPgColumn ? TView['_']['selectedFields'][TKey] : AnyPgColumn
+
+export type ContinuousAggregateReads<TView extends PgViewLike, TKey extends keyof TView['_']['selectedFields']> = {
+  within<TAlias extends string = TView['_']['name']>(
+    bounds: TimeBounds<BucketColumn<TView, TKey>>,
+    options?: { readonly as?: TAlias },
+  ): SubqueryWithSelection<TView['_']['selectedFields'], TAlias>
+  unsafeUnbounded(): TView
+}
+
+/**
+ * A TimescaleDB continuous aggregate. Its materialization is a hypertable, so a read that
+ * names no time range locks every chunk of it. Declared over a view, it is read through
+ * `within`, bounded on the bucket column. `unsafeUnbounded()` returns the plain view.
+ */
+export type ContinuousAggregate<
+  TView extends PgViewLike | null = PgViewLike | null,
+  TKey extends keyof NonNullable<TView>['_']['selectedFields'] = never,
+> =
+  & ContinuousAggregateDeclaration
+  & (TView extends PgViewLike ? ([TKey] extends [never] ? unknown : ContinuousAggregateReads<TView, TKey>) : unknown)
 
 export type ContinuousAggregateRefreshPolicyConfig = {
   startOffset?: string | null
@@ -1554,8 +1623,8 @@ type HypertableOrderInput =
   | string
   | { column: AnyPgColumn | string; direction?: 'asc' | 'desc'; nulls?: 'first' | 'last' }
 
-type DrizzleHypertableConfig<TTable extends PgTable> = {
-  timeColumn: TTable['_']['columns'][keyof TTable['_']['columns']]
+type DrizzleHypertableConfig<TTable extends PgTable, TTime extends ColumnOf<TTable> = ColumnOf<TTable>> = {
+  timeColumn: TTime
   chunkTimeInterval?: string
   partitioningColumn?: TTable['_']['columns'][keyof TTable['_']['columns']]
   numberPartitions?: number
@@ -1629,8 +1698,11 @@ type NameHypertableConfig = {
  * `CREATE TABLE` drizzle-kit already wrote. `generate` appends `create_hypertable`
  * with `if_not_exists => TRUE`. Export `pgExtension("timescaledb")` from the schema too.
  */
-export function hypertable<TTable extends PgTable>(table: TTable, config: DrizzleHypertableConfig<TTable>): Hypertable
-export function hypertable(table: { name: string; schema?: string }, config: NameHypertableConfig): Hypertable
+export function hypertable<TTable extends PgTable, TTime extends ColumnOf<TTable> = ColumnOf<TTable>>(
+  table: TTable,
+  config: DrizzleHypertableConfig<TTable, TTime>,
+): Hypertable<TTable, TTime>
+export function hypertable(table: NamedTable, config: NameHypertableConfig): Hypertable<NamedTable>
 export function hypertable(
   table: PgTable | { name: string; schema?: string },
   config: DrizzleHypertableConfig<PgTable> | NameHypertableConfig,
@@ -1691,24 +1763,62 @@ export function hypertable(
         'Timescale requires every unique index on a hypertable to include the time column and the space-partitioning column.',
     })
   }
-  return brand(
-    {
-      table,
-      timeColumn,
-      chunkTimeInterval: config.chunkTimeInterval === undefined
-        ? null
-        : normalizeInterval(config.chunkTimeInterval, `${where} chunkTimeInterval`),
-      partitioningColumn,
-      numberPartitions,
-      migrateData: config.migrateData ?? false,
-      createDefaultIndexes: config.createDefaultIndexes ?? true,
-      columnstore: config.columnstore ? readColumnstore(drizzleTable, config.columnstore, where) : null,
-      retention: config.retention ? readRetention(config.retention, where) : null,
-      columnstorePolicy: config.columnstorePolicy ? readColumnstorePolicy(config.columnstorePolicy, where) : null,
-      reorder: config.reorder === undefined ? null : readReorderIndex(config.reorder, where),
+  const declaration: Omit<HypertableDeclaration, typeof KIND> = {
+    [RELATION]: table,
+    timeColumn,
+    chunkTimeInterval: config.chunkTimeInterval === undefined
+      ? null
+      : normalizeInterval(config.chunkTimeInterval, `${where} chunkTimeInterval`),
+    partitioningColumn,
+    numberPartitions,
+    migrateData: config.migrateData ?? false,
+    createDefaultIndexes: config.createDefaultIndexes ?? true,
+    columnstore: config.columnstore ? readColumnstore(drizzleTable, config.columnstore, where) : null,
+    retention: config.retention ? readRetention(config.retention, where) : null,
+    columnstorePolicy: config.columnstorePolicy ? readColumnstorePolicy(config.columnstorePolicy, where) : null,
+    reorder: config.reorder === undefined ? null : readReorderIndex(config.reorder, where),
+  }
+  if (drizzleTable && typeof timeColumn !== 'string') {
+    attachHypertableReads(declaration, drizzleTable, timeColumn, identity.name)
+  }
+  return brand(declaration, 'hypertable') as unknown as Hypertable
+}
+
+function attachHypertableReads(
+  declaration: object,
+  table: PgTable,
+  timeColumn: AnyPgColumn,
+  tableName: string,
+): void {
+  const timeKey = Object.entries(getTableColumns(table)).find(([, column]) => column === timeColumn)?.[0]
+  if (timeKey === undefined) {
+    throw new PgExtrasError(`hypertable(${tableName}): timeColumn is not a column of the table`)
+  }
+  const read = {
+    source: table as BoundedSource,
+    timeColumn: timeColumn as PgColumn,
+    timeKey,
+    alias: tableName,
+    chunkInterval: (declaration as HypertableDeclaration).chunkTimeInterval,
+  }
+  Object.defineProperties(declaration, {
+    within: {
+      value: (bounds: { gte: unknown; lt: unknown }, options?: { as?: string }) =>
+        boundedSubquery(read.source, read.timeColumn, bounds, options?.as ?? tableName),
     },
-    'hypertable',
-  )
+    latest: {
+      value: (db: AnyPgDatabase, options?: LatestOptions<never>) => latestRow(db, read, options as never),
+    },
+    unsafeUnbounded: { value: () => table },
+  })
+}
+
+export function hypertableRelation(hypertable: HypertableDeclaration): PgTable | NamedTable {
+  return hypertable[RELATION]
+}
+
+export function continuousAggregateView(aggregate: ContinuousAggregateDeclaration): PgViewLike | null {
+  return aggregate[RELATION]
 }
 
 /**
@@ -1718,17 +1828,21 @@ export function hypertable(
  * leaves it alone. The SELECT is the aggregate's definition; `source` records the
  * declared hypertable or aggregate it reads from for ordering and rebuild safety.
  */
+export function continuousAggregate<TView extends PgViewLike, TKey extends keyof TView['_']['selectedFields'] & string>(
+  view: TView,
+  config: ContinuousAggregateConfig & { bucketColumn: TKey },
+): ContinuousAggregate<TView, TKey>
 export function continuousAggregate(
   view: PgViewLike,
   config: ContinuousAggregateConfig,
-): ContinuousAggregate
+): ContinuousAggregate<PgViewLike>
 export function continuousAggregate(
-  name: string | { name: string; schema?: string },
+  name: string | NamedTable,
   config: ContinuousAggregateConfig,
-): ContinuousAggregate
+): ContinuousAggregate<null>
 export function continuousAggregate(
-  viewOrName: PgViewLike | string | { name: string; schema?: string },
-  config: ContinuousAggregateConfig,
+  viewOrName: PgViewLike | string | NamedTable,
+  config: ContinuousAggregateConfig & { bucketColumn?: string },
 ): ContinuousAggregate {
   const view = isPgView(viewOrName) || isPgMaterializedView(viewOrName) ? viewOrName : null
   const identity = continuousAggregateIdentity(viewOrName)
@@ -1772,27 +1886,49 @@ export function continuousAggregate(
   if (config.columnstorePolicy && !config.columnstore) {
     throw new PgExtrasError(`${where}: columnstorePolicy requires columnstore`)
   }
-  return brand(
-    {
-      view,
-      schema: identity.schema,
-      name: identity.name,
-      query,
-      source: config.source ?? null,
-      realTime: config.realTime ?? true,
-      chunkInterval: config.chunkInterval === undefined
-        ? null
-        : normalizeInterval(config.chunkInterval, `${where} chunkInterval`),
-      createGroupIndexes: config.createGroupIndexes ?? true,
-      refreshPolicies: readContinuousAggregatePolicies(config.refreshPolicies ?? [], where),
-      columnstore: config.columnstore ? readColumnstore(null, config.columnstore, where) : null,
-      columnstorePolicy: config.columnstorePolicy
-        ? readContinuousAggregateColumnstorePolicy(config.columnstorePolicy, where)
-        : null,
-      retention: config.retention ? readContinuousAggregateRetention(config.retention, where) : null,
+  const declaration: Omit<ContinuousAggregateDeclaration, typeof KIND> = {
+    [RELATION]: view,
+    schema: identity.schema,
+    name: identity.name,
+    query,
+    source: config.source ?? null,
+    realTime: config.realTime ?? true,
+    chunkInterval: config.chunkInterval === undefined
+      ? null
+      : normalizeInterval(config.chunkInterval, `${where} chunkInterval`),
+    createGroupIndexes: config.createGroupIndexes ?? true,
+    refreshPolicies: readContinuousAggregatePolicies(config.refreshPolicies ?? [], where),
+    columnstore: config.columnstore ? readColumnstore(null, config.columnstore, where) : null,
+    columnstorePolicy: config.columnstorePolicy
+      ? readContinuousAggregateColumnstorePolicy(config.columnstorePolicy, where)
+      : null,
+    retention: config.retention ? readContinuousAggregateRetention(config.retention, where) : null,
+  }
+  if (view && config.bucketColumn !== undefined) {
+    attachContinuousAggregateReads(declaration, view, config.bucketColumn, where)
+  }
+  return brand(declaration, 'continuousAggregate') as unknown as ContinuousAggregate
+}
+
+function attachContinuousAggregateReads(
+  declaration: object,
+  view: PgViewLike,
+  bucketKey: string,
+  where: string,
+): void {
+  const config = isPgMaterializedView(view) ? getMaterializedViewConfig(view) : getViewConfig(view as PgView)
+  const bucket = (config.selectedFields as Record<string, unknown>)[bucketKey]
+  if (!is(bucket, Column)) {
+    throw new PgExtrasError(`${where}: bucketColumn must name a column of the view, for example bucketColumn: "bucket"`)
+  }
+  const viewName = config.name
+  Object.defineProperties(declaration, {
+    within: {
+      value: (bounds: { gte: unknown; lt: unknown }, options?: { as?: string }) =>
+        boundedSubquery(view as BoundedSource, bucket as PgColumn, bounds, options?.as ?? viewName),
     },
-    'continuousAggregate',
-  )
+    unsafeUnbounded: { value: () => view },
+  })
 }
 
 function readContinuousAggregatePolicies(

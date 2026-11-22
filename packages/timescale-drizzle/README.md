@@ -436,6 +436,41 @@ Every primary key and unique index on a Drizzle table has to include the time co
 
 The statements are idempotent. `create_hypertable`, `add_retention_policy`, `add_columnstore_policy`, and `add_reorder_policy` all pass `if_not_exists => TRUE`, and the columnstore `ALTER TABLE` can run again. Running the migration twice is a no-op when the hypertable, settings, and policies are already in place. `if_not_exists` does not change an existing policy's interval, so a later edit removes the policy and adds it again. A later `chunkTimeInterval` emits `set_chunk_time_interval`. Adding `partitioningColumn` after the hypertable exists emits `add_dimension`. `migrateData` and `createDefaultIndexes` are read only when the hypertable is first created; changing them later does not write a migration. A later `reorder` change removes the reorder policy and adds it again.
 
+### Reading a hypertable
+
+A query that names no time range makes Postgres plan every chunk, and it takes a lock on each chunk and each of its indexes. With a few thousand chunks, one `ORDER BY time DESC LIMIT 1` exhausts `max_locks_per_transaction` (SQLSTATE 53200), even though the executor stops after the first chunk. So `hypertable()` returns a declaration that is not a Drizzle table. `db.select().from(metricsHypertable)` does not compile; read it through one of these.
+
+```ts
+const window = metricsHypertable.within({ gte: start, lt: end })
+const rows = await db
+  .select({ value: window.value })
+  .from(window)
+  .where(eq(window.deviceId, deviceId))
+
+const newest = await metricsHypertable.latest(db, {
+  where: (w) => eq(w.deviceId, deviceId),
+  maxLookbackChunks: 64,
+})
+if (newest.found) resumeFrom(newest.row.time)
+else startAt(newest.searchedFrom)
+```
+
+- `within({ gte, lt })` returns a Drizzle subquery with `time >= $1 AND time < $2` written into it, so the planner excludes chunks outside the window. A `Date` bound is written into the SQL as a `timestamptz` literal, not a `$n` parameter, so chunk exclusion happens at plan time even in a prepared statement that has switched to a generic plan. A column, table or subquery is refused as a bound, since `time >= time` bounds nothing. It is a subquery rather than a pre-filtered builder because chaining `.where()` on a builder replaces the earlier `where`, and a caller could erase the bound without noticing. Pass `{ as: 'name' }` to alias it when you join two windows of one table.
+- `latest(db, { where, maxLookbackChunks, until })` finds the newest row with bounded probes. The first covers two chunk intervals ending at `until` (default: one minute past now, for clock skew; pass `until` when rows are dated in the future); each later one reaches four times further back, up to `maxLookbackChunks` intervals in total (default 64). A steady-state ingester finds its row on the first probe and locks one to three chunks. It returns `{ found: true, row }`, or `{ found: false, searchedFrom }` when nothing is that recent, so a missing row is never confused with an old one. Probe widths come from `chunkTimeInterval` (7 days when unset), with a month counted as 30 days and a year as 365; they size the probes and never decide which rows match.
+- `unsafeUnbounded()` returns the plain Drizzle table, for migrations, backfills and admin scripts. Its name is the point: an app can ban the call with a lint rule.
+
+The compiler can only guard what the app imports. Keep the Drizzle table in a schema module that drizzle-kit reads, and import only the hypertable from application code; `latest` is for occasional resume points, and a cursor read on every write belongs in a plain table you update on insert.
+
+A continuous aggregate is a hypertable underneath, so an unbounded read of it locks every chunk of its materialization. Pass `bucketColumn` when you declare it over a view and read it the same way:
+
+```ts
+export const metricsHourlyAggregate = continuousAggregate(metricsHourly, { bucketColumn: 'bucket', query: '...' })
+
+const window = metricsHourlyAggregate.within({ gte: start, lt: end })
+```
+
+An aggregate declared without `bucketColumn`, or by name, has no `within`.
+
 A later `drizzle-kit generate` still diffs your tables and reports no schema changes. `_pg-extras.json` from 0.4.0 still loads. Hypertable keys are added the next time a migration is written.
 
 ### Timescale limits

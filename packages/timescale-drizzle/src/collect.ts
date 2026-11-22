@@ -3,8 +3,10 @@ import { isPgEnum, isPgMaterializedView, isPgView, PgTable } from 'drizzle-orm/p
 import {
   type AnyPgEnum,
   type ContinuousAggregate,
+  continuousAggregateView,
   extrasKind,
   type Hypertable,
+  hypertableRelation,
   isPlainRecord,
   type PartitionedTable,
   type PgComment,
@@ -126,13 +128,15 @@ function walk(value: unknown, extras: PgExtras, seen: Set<unknown>): void {
   if (kind === 'hypertable') {
     const hypertable = value as Hypertable
     extras.hypertables.push(hypertable)
-    if (is(hypertable.table, PgTable)) walk(hypertable.table, extras, seen)
+    const table = hypertableRelation(hypertable)
+    if (is(table, PgTable)) walk(table, extras, seen)
     return
   }
   if (kind === 'continuousAggregate') {
     const aggregate = value as ContinuousAggregate
     extras.continuousAggregates.push(aggregate)
-    if (aggregate.view) walk(aggregate.view, extras, seen)
+    const view = continuousAggregateView(aggregate)
+    if (view) walk(view, extras, seen)
     if (aggregate.source) walk(aggregate.source, extras, seen)
     return
   }
