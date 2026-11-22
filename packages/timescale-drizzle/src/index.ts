@@ -5,6 +5,8 @@ export {
   type ContinuousAggregate,
   continuousAggregate,
   type ContinuousAggregateConfig,
+  type ContinuousAggregateDeclaration,
+  type ContinuousAggregateReads,
   type ContinuousAggregateRefreshPolicy,
   type ContinuousAggregateRefreshPolicyConfig,
   type ContinuousAggregateSource,
@@ -13,7 +15,9 @@ export {
   hypertable,
   type HypertableColumnstore,
   type HypertableColumnstorePolicy,
+  type HypertableDeclaration,
   type HypertableOrderSpec,
+  type HypertableReads,
   type HypertableRetention,
   type HypertableSparseIndex,
   type PartitionBound,
@@ -88,6 +92,7 @@ export {
   detachPartitionSql,
   dropPartitionSql,
 } from './partition-sql.js'
+export { type AnyPgDatabase, type BoundedSource, type Latest, type LatestOptions, type TimeBounds } from './read.js'
 export {
   type CommentSnapshot,
   type ContinuousAggregateRefreshPolicySnapshot,
