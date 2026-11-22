@@ -1,8 +1,8 @@
 import * as NodeCrypto from '@effect/platform-node/NodeCrypto'
 import { layer as nodeServicesLayer } from '@effect/platform-node/NodeServices'
-import { generate, type GenerateResult, type PgExtras } from '@systemfsoftware/drizzle-pg-extras'
 import { MicroVM } from '@systemfsoftware/effect-microsandbox'
 import { Readiness } from '@systemfsoftware/effect-readiness'
+import { generate, type GenerateResult, type PgExtras } from '@systemfsoftware/timescale-drizzle'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { Context, Data, Duration, Effect, Layer, Schedule, Schema } from 'effect'
@@ -87,7 +87,7 @@ const booted = (vm: MicroVM.RunningVM) =>
 export class Server extends Context.Service<Server, {
   readonly integresqlPort: number
   readonly postgresPort: number
-}>()('drizzle-pg-extras/tests/Server') {}
+}>()('timescale-drizzle/tests/Server') {}
 
 const TestDatabase = Schema.Struct({
   id: Schema.Int,
@@ -139,7 +139,7 @@ export class Database extends Context.Service<Database, {
   readonly url: string
   readonly out: string
   readonly pool: pg.Pool
-}>()('drizzle-pg-extras/tests/Database') {}
+}>()('timescale-drizzle/tests/Database') {}
 
 const attempt = <A>(step: string, run: () => Promise<A>) =>
   Effect.tryPromise({ try: run, catch: (cause) => new DatabaseFailed({ step, cause }) })
@@ -187,7 +187,7 @@ export const freshDatabase = Layer.effect(Database)(
       (pool) => Effect.promise(() => pool.end()),
     )
     const out = yield* Effect.acquireRelease(
-      Effect.sync(() => mkdtempSync(path.join(tmpdir(), `drizzle-pg-extras-${id}-`))),
+      Effect.sync(() => mkdtempSync(path.join(tmpdir(), `timescale-drizzle-${id}-`))),
       (dir) => Effect.sync(() => rmSync(dir, { recursive: true, force: true })),
     )
     return { url, out, pool }

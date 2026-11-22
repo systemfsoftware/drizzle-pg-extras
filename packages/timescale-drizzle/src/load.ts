@@ -29,7 +29,7 @@ export async function loadProject(cwd: string, configPath?: string): Promise<Loa
   const config = await importConfig(resolved)
   if (config.dialect && config.dialect !== 'postgresql') {
     throw new PgExtrasError(
-      `drizzle-pg-extras supports postgresql only. ${resolved} sets dialect "${config.dialect}".`,
+      `timescale-drizzle supports postgresql only. ${resolved} sets dialect "${config.dialect}".`,
     )
   }
   const schema = config.schema

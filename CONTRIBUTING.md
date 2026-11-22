@@ -1,6 +1,6 @@
 # Contributing
 
-The library lives in [`packages/drizzle-pg-extras`](packages/drizzle-pg-extras). The repository root holds the workspace, the toolchain and the release configuration.
+The library lives in [`packages/timescale-drizzle`](packages/timescale-drizzle). The repository root holds the workspace, the toolchain and the release configuration.
 
 ## Setup
 

@@ -27,7 +27,7 @@ tags:
 
 ## Problem
 
-In `@systemfsoftware/drizzle-pg-extras`, the exported `enableHypertableColumnstoreSql` renderer built the `ALTER TABLE ... SET (...)` option list only from non-empty collections. When a declaration changed from one or more sparse indexes to none, the renderer emitted no `timescaledb.sparse_index` option. TimescaleDB treats an option absent from `SET` as unchanged, so the previous sparse index survived regeneration even though the schema no longer declared it.
+In `@systemfsoftware/timescale-drizzle`, the exported `enableHypertableColumnstoreSql` renderer built the `ALTER TABLE ... SET (...)` option list only from non-empty collections. When a declaration changed from one or more sparse indexes to none, the renderer emitted no `timescaledb.sparse_index` option. TimescaleDB treats an option absent from `SET` as unchanged, so the previous sparse index survived regeneration even though the schema no longer declared it.
 
 The first correction emitted `timescaledb.sparse_index = ''` to force a change. TimescaleDB 2.32.1 accepts that DDL, then crashes on ordinary `INSERT`, `UPDATE`, or `DELETE` against a chunk in the columnstore. The empty string is a distinct, unsafe configuration, not a neutral clear. The server's documented clear is `ALTER TABLE ... RESET (timescaledb.sparse_index)`, which removes the explicit configuration and re-enables default sparse-index selection.
 

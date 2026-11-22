@@ -104,7 +104,7 @@ BEGIN
     IF direction = 'unpartition' THEN
       RETURN;
     END IF;
-    RAISE EXCEPTION 'drizzle-pg-extras: %.% does not exist. Run the drizzle-kit migration that creates this empty table before this one.', parent_schema, parent_name;
+    RAISE EXCEPTION 'timescale-drizzle: %.% does not exist. Run the drizzle-kit migration that creates this empty table before this one.', parent_schema, parent_name;
   END IF;
 
   IF direction = 'partition' AND parent_kind = 'p' THEN
@@ -123,7 +123,7 @@ BEGIN
     IF current_strategy = strategy AND NOT has_expression AND current_natts = cardinality(key_columns) AND current_cols = key_columns THEN
       RETURN;
     END IF;
-    RAISE EXCEPTION 'drizzle-pg-extras: %.% is already partitioned and its key does not match %. Partition keys cannot be changed in place.', parent_schema, parent_name, partition_by;
+    RAISE EXCEPTION 'timescale-drizzle: %.% is already partitioned and its key does not match %. Partition keys cannot be changed in place.', parent_schema, parent_name, partition_by;
   END IF;
 
   IF direction = 'unpartition' AND parent_kind = 'r' THEN
@@ -131,12 +131,12 @@ BEGIN
   END IF;
 
   IF parent_kind <> 'r' AND parent_kind <> 'p' THEN
-    RAISE EXCEPTION 'drizzle-pg-extras: %.% is not a regular or partitioned table.', parent_schema, parent_name;
+    RAISE EXCEPTION 'timescale-drizzle: %.% is not a regular or partitioned table.', parent_schema, parent_name;
   END IF;
 
   IF direction = 'unpartition' THEN
     IF EXISTS (SELECT 1 FROM pg_inherits WHERE inhparent = parent_oid) THEN
-      RAISE EXCEPTION 'drizzle-pg-extras: %.% still has child partitions. Detach or drop them before converting it back to a regular table.', parent_schema, parent_name;
+      RAISE EXCEPTION 'timescale-drizzle: %.% still has child partitions. Detach or drop them before converting it back to a regular table.', parent_schema, parent_name;
     END IF;
   END IF;
 
@@ -144,7 +144,7 @@ BEGIN
 
   EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I.%I LIMIT 1)', parent_schema, parent_name) INTO non_empty;
   IF non_empty THEN
-    RAISE EXCEPTION 'drizzle-pg-extras: %.% has rows, so it cannot be converted. PARTITION BY is only valid on CREATE TABLE. Empty the table, or load data after this migration.', parent_schema, parent_name;
+    RAISE EXCEPTION 'timescale-drizzle: %.% has rows, so it cannot be converted. PARTITION BY is only valid on CREATE TABLE. Empty the table, or load data after this migration.', parent_schema, parent_name;
   END IF;
 
   SELECT string_agg(format('%I.%I', vn.nspname, vc.relname), ', ' ORDER BY vn.nspname, vc.relname)
@@ -157,11 +157,11 @@ BEGIN
     AND d.classid = 'pg_rewrite'::regclass
     AND vc.oid <> parent_oid;
   IF dependents IS NOT NULL THEN
-    RAISE EXCEPTION 'drizzle-pg-extras: %.% cannot be converted while these views depend on it: %. Drop the views first and recreate them after the conversion. The conversion recreates the table.', parent_schema, parent_name, dependents;
+    RAISE EXCEPTION 'timescale-drizzle: %.% cannot be converted while these views depend on it: %. Drop the views first and recreate them after the conversion. The conversion recreates the table.', parent_schema, parent_name, dependents;
   END IF;
 
   IF to_regclass(format('%I.%I', parent_schema, swap_name)) IS NOT NULL THEN
-    RAISE EXCEPTION 'drizzle-pg-extras: %.% already exists. Rename it before converting %.%.', parent_schema, swap_name, parent_schema, parent_name;
+    RAISE EXCEPTION 'timescale-drizzle: %.% already exists. Rename it before converting %.%.', parent_schema, swap_name, parent_schema, parent_name;
   END IF;
 
   SELECT c.relrowsecurity, c.relforcerowsecurity, c.relreplident, c.reloptions, pg_get_userbyid(c.relowner), obj_description(c.oid, 'pg_class')
@@ -322,7 +322,7 @@ BEGIN
     LIMIT 1;
 
     IF match_oid IS NULL THEN
-      RAISE EXCEPTION 'drizzle-pg-extras: could not restore index % on %.% after converting it.', item->>'name', parent_schema, parent_name;
+      RAISE EXCEPTION 'timescale-drizzle: could not restore index % on %.% after converting it.', item->>'name', parent_schema, parent_name;
     END IF;
     claimed := claimed || match_oid;
     IF match_name IS DISTINCT FROM item->>'name' THEN
@@ -345,7 +345,7 @@ BEGIN
       AND pg_get_constraintdef(con.oid) = item->>'def'
     LIMIT 1;
     IF match_name IS NULL THEN
-      RAISE EXCEPTION 'drizzle-pg-extras: could not restore constraint % on %.% after converting it.', item->>'name', parent_schema, parent_name;
+      RAISE EXCEPTION 'timescale-drizzle: could not restore constraint % on %.% after converting it.', item->>'name', parent_schema, parent_name;
     END IF;
     IF match_name IS DISTINCT FROM item->>'name' THEN
       EXECUTE format('ALTER TABLE %I.%I RENAME CONSTRAINT %I TO %I', parent_schema, parent_name, match_name, item->>'name');
@@ -485,7 +485,7 @@ BEGIN
   parent_oid := to_regclass(format('%I.%I', parent_schema, parent_name));
   child_oid := to_regclass(format('%I.%I', child_schema, child_name));
   IF parent_oid IS NULL THEN
-    RAISE EXCEPTION 'drizzle-pg-extras: parent %.% does not exist. Partition the parent before attaching partitions.', parent_schema, parent_name;
+    RAISE EXCEPTION 'timescale-drizzle: parent %.% does not exist. Partition the parent before attaching partitions.', parent_schema, parent_name;
   END IF;
   IF child_oid IS NOT NULL THEN
     SELECT EXISTS (SELECT 1 FROM pg_inherits WHERE inhrelid = child_oid AND inhparent = parent_oid) INTO attached;
@@ -493,18 +493,18 @@ BEGIN
       RETURN;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_inherits WHERE inhrelid = child_oid) THEN
-      RAISE EXCEPTION 'drizzle-pg-extras: %.% is already a partition of another table.', child_schema, child_name;
+      RAISE EXCEPTION 'timescale-drizzle: %.% is already a partition of another table.', child_schema, child_name;
     END IF;
     ${
     mode === 'create'
-      ? `RAISE EXCEPTION 'drizzle-pg-extras: %.% already exists and is not a partition of %.%.', child_schema, child_name, parent_schema, parent_name;`
+      ? `RAISE EXCEPTION 'timescale-drizzle: %.% already exists and is not a partition of %.%.', child_schema, child_name, parent_schema, parent_name;`
       : `EXECUTE format('ALTER TABLE %I.%I ATTACH PARTITION %I.%I %s', parent_schema, parent_name, child_schema, child_name, bound_sql); RETURN;`
   }
   END IF;
   ${
     mode === 'create'
       ? `EXECUTE format('CREATE TABLE %I.%I PARTITION OF %I.%I %s', child_schema, child_name, parent_schema, parent_name, bound_sql);`
-      : `RAISE EXCEPTION 'drizzle-pg-extras: %.% does not exist. Create it with drizzle-kit before attaching it.', child_schema, child_name;`
+      : `RAISE EXCEPTION 'timescale-drizzle: %.% does not exist. Create it with drizzle-kit before attaching it.', child_schema, child_name;`
   }
 END
 `
@@ -549,11 +549,11 @@ BEGIN
     RETURN;
   END IF;
   IF EXISTS (SELECT 1 FROM pg_inherits i WHERE i.inhrelid = child_oid AND (parent_oid IS NULL OR i.inhparent <> parent_oid)) THEN
-    RAISE EXCEPTION 'drizzle-pg-extras: %.% is a partition of a different table. Refusing to drop it.', child_schema, child_name;
+    RAISE EXCEPTION 'timescale-drizzle: %.% is a partition of a different table. Refusing to drop it.', child_schema, child_name;
   END IF;
   EXECUTE format('SELECT EXISTS (SELECT 1 FROM %I.%I LIMIT 1)', child_schema, child_name) INTO non_empty;
   IF non_empty THEN
-    RAISE EXCEPTION 'drizzle-pg-extras: partition %.% has rows. Refusing to drop it. Empty it, or set onRemove: "detach" on the partition before removing it.', child_schema, child_name;
+    RAISE EXCEPTION 'timescale-drizzle: partition %.% has rows. Refusing to drop it. Empty it, or set onRemove: "detach" on the partition before removing it.', child_schema, child_name;
   END IF;
   IF parent_oid IS NOT NULL AND EXISTS (SELECT 1 FROM pg_inherits WHERE inhrelid = child_oid AND inhparent = parent_oid) THEN
     EXECUTE format('ALTER TABLE %I.%I DETACH PARTITION %I.%I', parent_schema, parent_name, child_schema, child_name);

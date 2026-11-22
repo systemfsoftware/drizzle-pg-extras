@@ -1,5 +1,5 @@
-import { defineExtras, pgFunction, pgGrant, viewDefinition } from '@systemfsoftware/drizzle-pg-extras'
 import { Gherkin, Given, it, makeFeature, Then, When } from '@systemfsoftware/effect-gherkin-spec'
+import { defineExtras, pgFunction, pgGrant, viewDefinition } from '@systemfsoftware/timescale-drizzle'
 import { sql } from 'drizzle-orm'
 import { integer, pgRole, pgSchema, text } from 'drizzle-orm/pg-core'
 import { Effect } from 'effect'

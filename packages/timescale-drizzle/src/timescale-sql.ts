@@ -76,13 +76,13 @@ export function enableHypertableColumnstoreSql(
 export function disableHypertableColumnstoreSql(ht: Pick<HypertableSnapshot, 'schema' | 'name'>): string {
   return `-- Turn the columnstore off on ${
     qualify(ht.schema, ht.name)
-  }. TimescaleDB refuses while any chunk is in the columnstore, so convert those chunks back to the rowstore first. The table lock keeps a concurrent conversion from undoing that before the ALTER.\nDO $drizzle_pg_extras$\nDECLARE\n  chunk regclass;\nBEGIN\n  LOCK TABLE ${
+  }. TimescaleDB refuses while any chunk is in the columnstore, so convert those chunks back to the rowstore first. The table lock keeps a concurrent conversion from undoing that before the ALTER.\nDO $timescale_drizzle$\nDECLARE\n  chunk regclass;\nBEGIN\n  LOCK TABLE ${
     qualify(ht.schema, ht.name)
   } IN ACCESS EXCLUSIVE MODE;\n  FOR chunk IN SELECT show_chunks(${
     relation(ht)
   }) LOOP\n    CALL convert_to_rowstore(chunk, if_columnstore => TRUE);\n  END LOOP;\n  ALTER TABLE ${
     qualify(ht.schema, ht.name)
-  } SET (timescaledb.enable_columnstore = false);\nEND\n$drizzle_pg_extras$;`
+  } SET (timescaledb.enable_columnstore = false);\nEND\n$timescale_drizzle$;`
 }
 
 export function addRetentionPolicySql(ht: HypertableSnapshot): string {
@@ -211,13 +211,13 @@ export function disableContinuousAggregateColumnstoreSql(
 ): string {
   return `-- Turn the columnstore off on ${
     qualify(aggregate.schema, aggregate.name)
-  }. TimescaleDB refuses while any chunk is in the columnstore, so convert those chunks back to the rowstore first. The table lock keeps a concurrent conversion from undoing that before the ALTER.\nDO $drizzle_pg_extras$\nDECLARE\n  chunk regclass;\nBEGIN\n  LOCK TABLE ${
+  }. TimescaleDB refuses while any chunk is in the columnstore, so convert those chunks back to the rowstore first. The table lock keeps a concurrent conversion from undoing that before the ALTER.\nDO $timescale_drizzle$\nDECLARE\n  chunk regclass;\nBEGIN\n  LOCK TABLE ${
     qualify(aggregate.schema, aggregate.name)
   } IN ACCESS EXCLUSIVE MODE;\n  FOR chunk IN SELECT show_chunks(${
     relation(aggregate)
   }) LOOP\n    CALL convert_to_rowstore(chunk, if_columnstore => TRUE);\n  END LOOP;\n  ALTER MATERIALIZED VIEW ${
     qualify(aggregate.schema, aggregate.name)
-  } SET (timescaledb.enable_columnstore = false);\nEND\n$drizzle_pg_extras$;`
+  } SET (timescaledb.enable_columnstore = false);\nEND\n$timescale_drizzle$;`
 }
 
 export function addContinuousAggregateColumnstorePolicySql(aggregate: ContinuousAggregateSnapshot): string {
@@ -293,25 +293,25 @@ export function removeContinuousAggregateRefreshPolicySql(
 export function leaveHypertableDimensionSql(ht: HypertableSnapshot): string {
   return `-- ${qualify(ht.schema, ht.name)} keeps its space partition on ${
     quoteIdent(ht.partitioningColumn ?? '')
-  }. This migration does not drop a hash dimension.\nDO $drizzle_pg_extras$\nBEGIN\n  RAISE NOTICE 'drizzle-pg-extras: %.% keeps space partition %', ${
+  }. This migration does not drop a hash dimension.\nDO $timescale_drizzle$\nBEGIN\n  RAISE NOTICE 'timescale-drizzle: %.% keeps space partition %', ${
     quoteLiteral(ht.schema)
-  }, ${quoteLiteral(ht.name)}, ${quoteLiteral(ht.partitioningColumn ?? '')};\nEND\n$drizzle_pg_extras$;`
+  }, ${quoteLiteral(ht.name)}, ${quoteLiteral(ht.partitioningColumn ?? '')};\nEND\n$timescale_drizzle$;`
 }
 
 export function leaveChunkIntervalSql(ht: HypertableSnapshot): string {
   return `-- ${
     qualify(ht.schema, ht.name)
-  } keeps chunk interval ${ht.chunkTimeInterval}. Clearing chunkTimeInterval is not generated.\nDO $drizzle_pg_extras$\nBEGIN\n  RAISE NOTICE 'drizzle-pg-extras: %.% keeps chunk interval %', ${
+  } keeps chunk interval ${ht.chunkTimeInterval}. Clearing chunkTimeInterval is not generated.\nDO $timescale_drizzle$\nBEGIN\n  RAISE NOTICE 'timescale-drizzle: %.% keeps chunk interval %', ${
     quoteLiteral(ht.schema)
-  }, ${quoteLiteral(ht.name)}, ${quoteLiteral(ht.chunkTimeInterval ?? '')};\nEND\n$drizzle_pg_extras$;`
+  }, ${quoteLiteral(ht.name)}, ${quoteLiteral(ht.chunkTimeInterval ?? '')};\nEND\n$timescale_drizzle$;`
 }
 
 export function leaveHypertableSql(ht: Pick<HypertableSnapshot, 'schema' | 'name'>): string {
   return `-- ${
     qualify(ht.schema, ht.name)
-  } stays a hypertable. TimescaleDB cannot turn it back into a regular table from this migration.\nDO $drizzle_pg_extras$\nBEGIN\n  RAISE NOTICE 'drizzle-pg-extras: %.% stays a hypertable', ${
+  } stays a hypertable. TimescaleDB cannot turn it back into a regular table from this migration.\nDO $timescale_drizzle$\nBEGIN\n  RAISE NOTICE 'timescale-drizzle: %.% stays a hypertable', ${
     quoteLiteral(ht.schema)
-  }, ${quoteLiteral(ht.name)};\nEND\n$drizzle_pg_extras$;`
+  }, ${quoteLiteral(ht.name)};\nEND\n$timescale_drizzle$;`
 }
 
 function retentionArgs(policy: HypertableRetentionSnapshot): string[] {

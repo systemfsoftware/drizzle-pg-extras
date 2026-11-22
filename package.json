@@ -1,5 +1,5 @@
 {
-  "name": "drizzle-pg-extras",
+  "name": "timescale-drizzle",
   "version": "0.0.0",
   "private": true,
   "description": "Declare Postgres functions, triggers, extensions, partitioned tables, comments, and TimescaleDB hypertables next to a Drizzle schema and generate SQL migrations.",
@@ -7,10 +7,10 @@
   "packageManager": "pnpm@12.9.0",
   "scripts": {
     "prepare": "effect-tsgo patch --oxlint --no-typescript --skip-missing",
-    "build": "pnpm --filter @systemfsoftware/drizzle-pg-extras run build",
-    "typecheck": "pnpm --filter @systemfsoftware/drizzle-pg-extras run typecheck",
-    "lint": "pnpm --filter @systemfsoftware/drizzle-pg-extras run lint",
-    "test": "pnpm --filter @systemfsoftware/drizzle-pg-extras run test",
+    "build": "pnpm --filter @systemfsoftware/timescale-drizzle run build",
+    "typecheck": "pnpm --filter @systemfsoftware/timescale-drizzle run typecheck",
+    "lint": "pnpm --filter @systemfsoftware/timescale-drizzle run lint",
+    "test": "pnpm --filter @systemfsoftware/timescale-drizzle run test",
     "format": "dprint fmt",
     "format:check": "dprint check"
   },

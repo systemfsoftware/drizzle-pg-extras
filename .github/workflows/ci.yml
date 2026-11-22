@@ -50,8 +50,8 @@ jobs:
       - run: pnpm typecheck
       # attw and publint guard the built dual-format output, so the build precedes them.
       - run: pnpm build
-      - run: pnpm --filter @systemfsoftware/drizzle-pg-extras exec attw --pack .
-      - run: pnpm --filter @systemfsoftware/drizzle-pg-extras exec publint
+      - run: pnpm --filter @systemfsoftware/timescale-drizzle exec attw --pack .
+      - run: pnpm --filter @systemfsoftware/timescale-drizzle exec publint
 
   changeset:
     name: change intent
@@ -87,8 +87,8 @@ jobs:
       # The fixtures pull the digest-pinned IntegreSQL layer from ghcr.io once and keep it here.
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ~/.cache/drizzle-pg-extras/integresql-layers
-          key: integresql-${{ runner.arch }}-${{ hashFiles('packages/drizzle-pg-extras/tests/__fixtures__/integresql-binary.ts') }}
+          path: ~/.cache/timescale-drizzle/integresql-layers
+          key: integresql-${{ runner.arch }}-${{ hashFiles('packages/timescale-drizzle/tests/__fixtures__/integresql-binary.ts') }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 

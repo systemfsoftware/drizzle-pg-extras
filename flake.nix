@@ -22,7 +22,7 @@
         pnpm-release-management.lib.mkPnpmWorkspacePackages {
           inherit pkgs;
           src = self;
-          pname = "drizzle-pg-extras";
+          pname = "timescale-drizzle";
           pnpm = pkgs.pnpm_12;
         };
     in
@@ -33,7 +33,7 @@
         consumer-store = pnpm-release-management.lib.mkPnpmConsumerStore {
           inherit pkgs;
           src = self;
-          pname = "drizzle-pg-extras";
+          pname = "timescale-drizzle";
           pnpm = pkgs.pnpm_12;
         };
       });

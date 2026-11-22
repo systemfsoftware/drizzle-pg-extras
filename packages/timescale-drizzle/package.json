@@ -1,18 +1,18 @@
 {
-  "name": "@systemfsoftware/drizzle-pg-extras",
+  "name": "@systemfsoftware/timescale-drizzle",
   "version": "0.8.0",
   "description": "Declare Postgres functions, triggers, extensions, partitioned tables, comments, and TimescaleDB hypertables next to a Drizzle schema and generate SQL migrations.",
   "type": "module",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/systemfsoftware/drizzle-pg-extras.git",
-    "directory": "packages/drizzle-pg-extras"
+    "url": "git+https://github.com/systemfsoftware/timescale-drizzle.git",
+    "directory": "packages/timescale-drizzle"
   },
   "bugs": {
-    "url": "https://github.com/systemfsoftware/drizzle-pg-extras/issues"
+    "url": "https://github.com/systemfsoftware/timescale-drizzle/issues"
   },
-  "homepage": "https://github.com/systemfsoftware/drizzle-pg-extras/tree/main/packages/drizzle-pg-extras#readme",
+  "homepage": "https://github.com/systemfsoftware/timescale-drizzle/tree/main/packages/timescale-drizzle#readme",
   "keywords": [
     "drizzle",
     "drizzle-orm",
@@ -30,7 +30,7 @@
     "node": ">=20.19.0"
   },
   "bin": {
-    "drizzle-pg-extras": "./dist/cli.js"
+    "timescale-drizzle": "./dist/cli.js"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

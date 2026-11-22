@@ -33,7 +33,7 @@ relation "<schema>.candle_5m" does not exist
 
 ## Root cause
 
-The emit order lives in the diff planner of `@systemfsoftware/drizzle-pg-extras`, in the internal `orderedContinuousAggregates` used by the exported `diffSnapshots` and `renderIdempotent`. It recorded a dependency only when an aggregate declared `source: <another aggregate>`. Without that declaration it fell back to the snapshot order, which `snapshotExtras` sorts by name — so a child whose name sorts before its parent's was emitted first.
+The emit order lives in the diff planner of `@systemfsoftware/timescale-drizzle`, in the internal `orderedContinuousAggregates` used by the exported `diffSnapshots` and `renderIdempotent`. It recorded a dependency only when an aggregate declared `source: <another aggregate>`. Without that declaration it fell back to the snapshot order, which `snapshotExtras` sorts by name — so a child whose name sorts before its parent's was emitted first.
 
 The declaration was accepted and rendered without error; nothing checked that every relation an aggregate reads is created earlier in the same migration.
 
