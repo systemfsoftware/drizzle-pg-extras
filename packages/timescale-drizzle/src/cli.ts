@@ -1,4 +1,5 @@
 import { pathToFileURL } from 'node:url'
+import { blocking, chunkCountFindings, DEFAULT_MAX_CHUNKS, describeFinding } from './chunk-count.js'
 import { PgExtrasError } from './errors.js'
 import { generate, pendingStatements } from './generate.js'
 import { loadProject } from './load.js'
@@ -6,6 +7,7 @@ import { loadProject } from './load.js'
 type CliOptions = {
   config?: string
   name?: string
+  maxChunks?: number
   help?: boolean
 }
 
@@ -56,14 +58,20 @@ async function generateCommand(options: CliOptions): Promise<number> {
 
 async function checkCommand(options: CliOptions): Promise<number> {
   const project = await loadProject(process.cwd(), options.config)
-  const pending = pendingStatements(project.extras, project.out, project.casing)
-  if (pending.length === 0) {
-    console.log('pg extras are up to date')
-    return 0
+  const findings = chunkCountFindings(project.extras.hypertables, options.maxChunks ?? DEFAULT_MAX_CHUNKS)
+  for (const finding of findings) {
+    const line = describeFinding(finding)
+    if (blocking(finding)) console.error(line)
+    else console.log(`note: ${line}`)
   }
-  console.error('Definitions changed and have no migration yet:')
-  console.error(pending.join('\n\n'))
-  return 1
+  const pending = pendingStatements(project.extras, project.out, project.casing)
+  if (pending.length > 0) {
+    console.error('Definitions changed and have no migration yet:')
+    console.error(pending.join('\n\n'))
+  }
+  if (pending.length > 0 || findings.some(blocking)) return 1
+  console.log('pg extras are up to date')
+  return 0
 }
 
 function parseArgs(args: readonly string[]): CliOptions {
@@ -86,6 +94,12 @@ function parseArgs(args: readonly string[]): CliOptions {
       options.name = value
       continue
     }
+    if (arg === '--max-chunks') {
+      const value = Number(args[++i])
+      if (!Number.isInteger(value) || value < 1) throw new PgExtrasError('--max-chunks needs a positive whole number')
+      options.maxChunks = value
+      continue
+    }
     throw new PgExtrasError(`Unknown option ${arg}`)
   }
   return options
@@ -104,10 +118,11 @@ function printHelp(): void {
   console.log(`timescale-drizzle ${commandList()}
 
   generate   Write a drizzle-kit migration for functions, triggers, comments, extensions, partitions, and hypertables that changed
-  check      Exit 1 when those definitions changed and no migration was written
+  check      Exit 1 when those definitions changed and no migration was written, or a hypertable keeps too many chunks or declares no retention
 
   --config, -c <file>   drizzle config. Defaults to drizzle.config.ts
   --name <name>         migration name. Defaults to pg_extras
+  --max-chunks <n>      check: most chunks a hypertable may keep. Defaults to 500
 `)
 }
 
