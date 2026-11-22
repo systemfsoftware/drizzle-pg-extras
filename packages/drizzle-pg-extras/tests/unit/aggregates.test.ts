@@ -69,6 +69,23 @@ describe('continuous aggregates', () => {
     expect(renderIdempotent(extras([hourly], table, ht))).toContain('CREATE MATERIALIZED VIEW IF NOT EXISTS')
   })
 
+  it('orders a parent aggregate before a child that reads it without a declared source', () => {
+    const { table, ht } = setup()
+    const hourly = continuousAggregate(viewOf('metrics_hourly'), { query: 'SELECT 1 AS value', source: ht })
+    const daily = continuousAggregate(viewOf('metrics_daily'), {
+      query: 'SELECT max(value) AS value FROM "public"."metrics_hourly"',
+    })
+    const childFirst = snapshotExtras(extras([daily, hourly], table, ht))
+    const up = diffSnapshots(emptySnapshot(), childFirst).up.join('\n')
+    expect(up.indexOf('CREATE MATERIALIZED VIEW IF NOT EXISTS "public"."metrics_hourly"')).toBeLessThan(
+      up.indexOf('CREATE MATERIALIZED VIEW IF NOT EXISTS "public"."metrics_daily"'),
+    )
+    const idempotent = renderIdempotent(extras([daily, hourly], table, ht))
+    expect(idempotent.indexOf('"public"."metrics_hourly"')).toBeLessThan(
+      idempotent.indexOf('"public"."metrics_daily"'),
+    )
+  })
+
   it('renders real-time off, chunk intervals, and group indexes', () => {
     const { table, ht } = setup()
     const view = viewOf('metrics_daily')

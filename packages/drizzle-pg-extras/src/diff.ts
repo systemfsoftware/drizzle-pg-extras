@@ -550,6 +550,42 @@ function assertAggregateSourceDeclared(
   }
 }
 
+function escapeForPattern(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function readsAggregate(
+  aggregate: ContinuousAggregateSnapshot,
+  candidate: ContinuousAggregateSnapshot,
+): boolean {
+  const relation = `\\bFROM\\s+(?:"[^"]+"\\s*\\.\\s*)?"?${escapeForPattern(candidate.name)}"?\\s*(?:$|\\s|,)`
+  return new RegExp(relation, 'im').test(aggregate.query)
+}
+
+function declaredParentOf(
+  aggregate: ContinuousAggregateSnapshot,
+  byId: Map<string, ContinuousAggregateSnapshot>,
+): ContinuousAggregateSnapshot | undefined {
+  if (aggregate.source?.kind !== 'continuousAggregate') return undefined
+  return byId.get(JSON.stringify(['continuousAggregate', aggregate.source.schema, aggregate.source.name]))
+}
+
+function referencedParentOf(
+  aggregate: ContinuousAggregateSnapshot,
+  aggregates: readonly ContinuousAggregateSnapshot[],
+): ContinuousAggregateSnapshot | undefined {
+  return aggregates.filter((candidate) => candidate.id !== aggregate.id)
+    .find((candidate) => readsAggregate(aggregate, candidate))
+}
+
+function parentOf(
+  aggregate: ContinuousAggregateSnapshot,
+  aggregates: readonly ContinuousAggregateSnapshot[],
+  byId: Map<string, ContinuousAggregateSnapshot>,
+): ContinuousAggregateSnapshot | undefined {
+  return declaredParentOf(aggregate, byId) ?? referencedParentOf(aggregate, aggregates)
+}
+
 function orderedContinuousAggregates(
   aggregates: readonly ContinuousAggregateSnapshot[],
 ): ContinuousAggregateSnapshot[] {
@@ -565,12 +601,8 @@ function orderedContinuousAggregates(
       )
     }
     visiting.add(aggregate.id)
-    if (aggregate.source?.kind === 'continuousAggregate') {
-      const parent = byId.get(
-        JSON.stringify(['continuousAggregate', aggregate.source.schema, aggregate.source.name]),
-      )
-      if (parent) visit(parent)
-    }
+    const parent = parentOf(aggregate, aggregates, byId)
+    if (parent) visit(parent)
     visiting.delete(aggregate.id)
     done.add(aggregate.id)
     ordered.push(aggregate)
