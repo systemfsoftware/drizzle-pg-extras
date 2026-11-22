@@ -550,16 +550,40 @@ function assertAggregateSourceDeclared(
   }
 }
 
-function escapeForPattern(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+type RelationReference = {
+  readonly schema: string | null
+  readonly name: string
 }
 
+const unquoted = (part: string): string => part.startsWith('"') ? part.slice(1, -1) : part.toLowerCase()
+
+const relationPattern = /\b(?:FROM|JOIN)\s+((?:"[^"]+"|[A-Za-z_][\w$]*)(?:\s*\.\s*(?:"[^"]+"|[A-Za-z_][\w$]*))?)/gi
+
+function relationReferenceOf(target: string): RelationReference {
+  const [first = '', second] = target.split(/\s*\.\s*/)
+  return second === undefined
+    ? { schema: null, name: unquoted(first) }
+    : { schema: unquoted(first), name: unquoted(second) }
+}
+
+function relationsReadBy(query: string): RelationReference[] {
+  return [...query.matchAll(relationPattern)].map((match) => relationReferenceOf(match[1] ?? ''))
+}
+
+const nameMatches = (reference: RelationReference, candidate: ContinuousAggregateSnapshot): boolean =>
+  reference.name === candidate.name
+
+const schemaMatches = (reference: RelationReference, candidate: ContinuousAggregateSnapshot): boolean =>
+  reference.schema === null || reference.schema === candidate.schema
+
+const readsCandidate = (reference: RelationReference, candidate: ContinuousAggregateSnapshot): boolean =>
+  nameMatches(reference, candidate) && schemaMatches(reference, candidate)
+
 function readsAggregate(
-  aggregate: ContinuousAggregateSnapshot,
+  references: readonly RelationReference[],
   candidate: ContinuousAggregateSnapshot,
 ): boolean {
-  const relation = `\\bFROM\\s+(?:"[^"]+"\\s*\\.\\s*)?"?${escapeForPattern(candidate.name)}"?\\s*(?:$|\\s|,)`
-  return new RegExp(relation, 'im').test(aggregate.query)
+  return references.some((reference) => readsCandidate(reference, candidate))
 }
 
 function declaredParentOf(
@@ -570,20 +594,31 @@ function declaredParentOf(
   return byId.get(JSON.stringify(['continuousAggregate', aggregate.source.schema, aggregate.source.name]))
 }
 
-function referencedParentOf(
+const otherAggregateOf =
+  (aggregate: ContinuousAggregateSnapshot) => (candidate: ContinuousAggregateSnapshot): boolean =>
+    candidate.id !== aggregate.id
+
+function referencedParentsOf(
   aggregate: ContinuousAggregateSnapshot,
   aggregates: readonly ContinuousAggregateSnapshot[],
-): ContinuousAggregateSnapshot | undefined {
-  return aggregates.filter((candidate) => candidate.id !== aggregate.id)
-    .find((candidate) => readsAggregate(aggregate, candidate))
+): ContinuousAggregateSnapshot[] {
+  const references = relationsReadBy(aggregate.query)
+  return aggregates.filter(otherAggregateOf(aggregate))
+    .filter((candidate) => readsAggregate(references, candidate))
 }
 
-function parentOf(
+const distinctFromParent =
+  (declared: ContinuousAggregateSnapshot | undefined) => (candidate: ContinuousAggregateSnapshot): boolean =>
+    candidate.id !== declared?.id
+
+function parentsOf(
   aggregate: ContinuousAggregateSnapshot,
   aggregates: readonly ContinuousAggregateSnapshot[],
   byId: Map<string, ContinuousAggregateSnapshot>,
-): ContinuousAggregateSnapshot | undefined {
-  return declaredParentOf(aggregate, byId) ?? referencedParentOf(aggregate, aggregates)
+): ContinuousAggregateSnapshot[] {
+  const declared = declaredParentOf(aggregate, byId)
+  const referenced = referencedParentsOf(aggregate, aggregates).filter(distinctFromParent(declared))
+  return declared ? [declared, ...referenced] : referenced
 }
 
 function orderedContinuousAggregates(
@@ -601,8 +636,7 @@ function orderedContinuousAggregates(
       )
     }
     visiting.add(aggregate.id)
-    const parent = parentOf(aggregate, aggregates, byId)
-    if (parent) visit(parent)
+    for (const parent of parentsOf(aggregate, aggregates, byId)) visit(parent)
     visiting.delete(aggregate.id)
     done.add(aggregate.id)
     ordered.push(aggregate)
