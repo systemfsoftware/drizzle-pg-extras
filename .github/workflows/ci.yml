@@ -84,6 +84,11 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - uses: ./.github/actions/pnpm-store
+      # The fixtures pull the digest-pinned IntegreSQL layer from ghcr.io once and keep it here.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/drizzle-pg-extras/integresql-layers
+          key: integresql-${{ runner.arch }}-${{ hashFiles('packages/drizzle-pg-extras/tests/__fixtures__/integresql-binary.ts') }}
       - run: pnpm install --frozen-lockfile
       - run: pnpm test
 

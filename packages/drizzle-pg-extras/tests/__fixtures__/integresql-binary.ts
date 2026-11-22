@@ -1,4 +1,4 @@
-import { Data, Effect, Schema } from 'effect'
+import { Data, Effect, Schedule, Schema } from 'effect'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
@@ -59,7 +59,11 @@ const pulled = (digest: string) =>
       ),
     ).pipe(Effect.flatMap(HttpClientResponse.filterStatusOk))
     return new Uint8Array(yield* response.arrayBuffer)
-  }).pipe(Effect.mapError(unavailable))
+  }).pipe(
+    // A registry blip on a cold cache would fail every scenario; the digest check below still rejects a bad blob.
+    Effect.retry({ schedule: Schedule.exponential('1 second'), times: 4 }),
+    Effect.mapError(unavailable),
+  )
 
 const cached = (file: string) =>
   Effect.promise(() => readFile(file).then((bytes) => new Uint8Array(bytes), () => undefined))
