@@ -1,16 +1,10 @@
-import { and, desc, gte, lt, type SQL, type SQLWrapper } from 'drizzle-orm'
-import {
-  type PgColumn,
-  type PgDatabase,
-  type PgQueryResultHKT,
-  QueryBuilder,
-  type SubqueryWithSelection,
-} from 'drizzle-orm/pg-core'
+import { and, Column, desc, gte, is, lt, type SQL, sql, type SQLWrapper, Subquery, Table } from 'drizzle-orm'
+import { type PgColumn, QueryBuilder, type SubqueryWithSelection } from 'drizzle-orm/pg-core'
 import { PgExtrasError } from './errors.js'
 
 export type TimeBounds<TTime extends PgColumn> = {
-  readonly gte: TTime['_']['data'] | SQLWrapper
-  readonly lt: TTime['_']['data'] | SQLWrapper
+  readonly gte: TTime['_']['data'] | BoundExpression
+  readonly lt: TTime['_']['data'] | BoundExpression
 }
 
 export type Latest<TRow> =
@@ -23,7 +17,9 @@ export type LatestOptions<TWindow> = {
   readonly until?: Date
 }
 
-export type AnyPgDatabase = PgDatabase<PgQueryResultHKT>
+export type BoundExpression = Exclude<SQLWrapper, Column | Table | Subquery>
+
+export type AnyPgDatabase = { readonly select: (...args: never[]) => unknown }
 
 export type BoundedSource = Parameters<ReturnType<QueryBuilder['select']>['from']>[0]
 
@@ -55,13 +51,25 @@ export function intervalMilliseconds(interval: string): number {
   return total
 }
 
-function assertWindow(bounds: { gte: unknown; lt: unknown }): void {
-  const { gte: from, lt: to } = bounds
-  if (from instanceof Date && to instanceof Date) {
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
-      throw new PgExtrasError('within(): the bounds must be valid dates')
-    }
-    if (from.getTime() >= to.getTime()) throw new PgExtrasError('within(): gte must be before lt')
+function boundValue(bound: unknown, label: string): unknown {
+  if (is(bound, Column) || is(bound, Table) || is(bound, Subquery)) {
+    throw new PgExtrasError(`within(): ${label} must be a value or a sql expression, not a column or table`)
+  }
+  if (bound instanceof Date) {
+    if (!Number.isFinite(bound.getTime())) throw new PgExtrasError(`within(): ${label} is an invalid date`)
+    return sql.raw(`'${bound.toISOString()}'::timestamptz`)
+  }
+  if (typeof bound === 'number' && !Number.isFinite(bound)) {
+    throw new PgExtrasError(`within(): ${label} is not a finite number`)
+  }
+  return bound
+}
+
+function assertOrdered(from: unknown, to: unknown): void {
+  const first = from instanceof Date ? from.getTime() : typeof from === 'string' ? Date.parse(from) : Number.NaN
+  const second = to instanceof Date ? to.getTime() : typeof to === 'string' ? Date.parse(to) : Number.NaN
+  if (Number.isFinite(first) && Number.isFinite(second) && first >= second) {
+    throw new PgExtrasError('within(): gte must be before lt')
   }
 }
 
@@ -71,11 +79,13 @@ export function boundedSubquery<TAlias extends string>(
   bounds: { gte: unknown; lt: unknown },
   alias: TAlias,
 ): SubqueryWithSelection<Record<string, PgColumn>, TAlias> {
-  assertWindow(bounds)
+  assertOrdered(bounds.gte, bounds.lt)
+  const from = boundValue(bounds.gte, 'gte')
+  const to = boundValue(bounds.lt, 'lt')
   return new QueryBuilder()
     .select()
     .from(source)
-    .where(and(gte(timeColumn, bounds.gte), lt(timeColumn, bounds.lt)))
+    .where(and(gte(timeColumn, from), lt(timeColumn, to)))
     .as(alias) as unknown as SubqueryWithSelection<Record<string, PgColumn>, TAlias>
 }
 
@@ -127,6 +137,9 @@ export async function latestRow<TRow>(
   }
   const chunkIntervalMs = intervalMilliseconds(read.chunkInterval ?? DEFAULT_CHUNK_INTERVAL)
   const until = options?.until ?? new Date(Date.now() + chunkIntervalMs)
+  if (!Number.isFinite(until.getTime()) || !Number.isFinite(until.getTime() - chunkIntervalMs * maxLookbackChunks)) {
+    throw new PgExtrasError('latest(): until and maxLookbackChunks must give a finite time range')
+  }
   const windows = probeWindows(until, chunkIntervalMs, maxLookbackChunks)
   for (const window of windows) {
     const probe = boundedSubquery(read.source, read.timeColumn, { gte: window.from, lt: window.to }, read.alias)

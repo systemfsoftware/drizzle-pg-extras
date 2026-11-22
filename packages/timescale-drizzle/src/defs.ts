@@ -341,7 +341,7 @@ export type HypertableReads<TTable extends PgTable, TTime extends AnyPgColumn> =
  */
 export type Hypertable<
   TTable extends PgTable | NamedTable = PgTable | NamedTable,
-  TTime extends AnyPgColumn = AnyPgColumn,
+  TTime extends AnyPgColumn = TTable extends PgTable ? ColumnOf<TTable> : AnyPgColumn,
 > = HypertableDeclaration & (TTable extends PgTable ? HypertableReads<TTable, TTime> : unknown)
 
 export type ContinuousAggregateSource = Hypertable | ContinuousAggregate
