@@ -471,6 +471,17 @@ const window = metricsHourlyAggregate.within({ gte: start, lt: end })
 
 An aggregate declared without `bucketColumn`, or by name, has no `within`.
 
+### Checking chunk counts
+
+`timescale-drizzle check` also reads the hypertables and fails when one can grow past a chunk budget. Each chunk and its indexes cost a lock in any query that cannot exclude it, so the number of chunks a table keeps is a deployment risk you can read from the declaration. The count is `ceil(dropAfter / chunkTimeInterval)`, with 7 days when `chunkTimeInterval` is unset. `dropCreatedBefore` counts the same way. The limit is 500; `--max-chunks <n>` changes it.
+
+- A hypertable with no `retention` fails, so unbounded growth is a choice: write `retention: 'unbounded'`. It creates no retention policy.
+- `retention: 'unbounded'` with `expectedHistory: '3 years'` checks `ceil(expectedHistory / chunkTimeInterval)` against the limit. `expectedHistory` is a number you declare, not something measured, and it is only read by `check`.
+- `retention: 'unbounded'` without `expectedHistory` prints a note and passes, because its chunk count has no bound to compute.
+- Continuous aggregates are not checked.
+
+A month counts as 30 days and a year as 365. `check` still exits 1 when definitions changed and no migration was written.
+
 A later `drizzle-kit generate` still diffs your tables and reports no schema changes. `_pg-extras.json` from 0.4.0 still loads. Hypertable keys are added the next time a migration is written.
 
 ### Timescale limits

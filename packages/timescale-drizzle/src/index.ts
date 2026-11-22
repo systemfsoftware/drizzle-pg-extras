@@ -1,3 +1,4 @@
+export { type ChunkCountFinding, chunkCountFindings, DEFAULT_MAX_CHUNKS } from './chunk-count.js'
 export { collectExtras, defineExtras } from './collect.js'
 export {
   type AnyPgEnum,

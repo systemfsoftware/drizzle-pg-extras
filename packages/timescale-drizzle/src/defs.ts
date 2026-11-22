@@ -316,6 +316,8 @@ export type HypertableDeclaration = {
   readonly createDefaultIndexes: boolean
   readonly columnstore: HypertableColumnstore | null
   readonly retention: HypertableRetention | null
+  readonly unboundedRetention: boolean
+  readonly expectedHistory: string | null
   readonly columnstorePolicy: HypertableColumnstorePolicy | null
   readonly reorder: string | null
 }
@@ -1645,13 +1647,16 @@ type DrizzleHypertableConfig<TTable extends PgTable, TTime extends ColumnOf<TTab
       columns: readonly TTable['_']['columns'][keyof TTable['_']['columns']][]
     }[]
   }
-  retention?: {
-    dropAfter?: string
-    dropCreatedBefore?: string
-    scheduleInterval?: string
-    initialStart?: string
-    timezone?: string
-  }
+  retention?:
+    | {
+      dropAfter?: string
+      dropCreatedBefore?: string
+      scheduleInterval?: string
+      initialStart?: string
+      timezone?: string
+    }
+    | 'unbounded'
+  expectedHistory?: string
   columnstorePolicy?: {
     after?: string
     createdBefore?: string
@@ -1674,13 +1679,16 @@ type NameHypertableConfig = {
     orderBy?: readonly (string | { column: string; direction?: 'asc' | 'desc'; nulls?: 'first' | 'last' })[]
     sparseIndex?: readonly { type: 'bloom' | 'minmax'; columns: readonly string[] }[]
   }
-  retention?: {
-    dropAfter?: string
-    dropCreatedBefore?: string
-    scheduleInterval?: string
-    initialStart?: string
-    timezone?: string
-  }
+  retention?:
+    | {
+      dropAfter?: string
+      dropCreatedBefore?: string
+      scheduleInterval?: string
+      initialStart?: string
+      timezone?: string
+    }
+    | 'unbounded'
+  expectedHistory?: string
   columnstorePolicy?: {
     after?: string
     createdBefore?: string
@@ -1745,6 +1753,9 @@ export function hypertable(
       `${where}: migrateData cannot be combined with partitioningColumn. create_hypertable migrates rows first, and add_dimension only runs on an empty hypertable. Set migrateData: false or omit the space partition.`,
     )
   }
+  if (config.expectedHistory !== undefined && config.retention !== 'unbounded') {
+    throw new PgExtrasError(`${where}: expectedHistory only applies with retention: 'unbounded'`)
+  }
   if (config.columnstorePolicy && !config.columnstore) {
     throw new PgExtrasError(
       `${where}: columnstorePolicy requires columnstore. Pass columnstore: {} or set segmentBy and orderBy.`,
@@ -1774,7 +1785,11 @@ export function hypertable(
     migrateData: config.migrateData ?? false,
     createDefaultIndexes: config.createDefaultIndexes ?? true,
     columnstore: config.columnstore ? readColumnstore(drizzleTable, config.columnstore, where) : null,
-    retention: config.retention ? readRetention(config.retention, where) : null,
+    retention: config.retention && config.retention !== 'unbounded' ? readRetention(config.retention, where) : null,
+    unboundedRetention: config.retention === 'unbounded',
+    expectedHistory: config.expectedHistory === undefined
+      ? null
+      : normalizeInterval(config.expectedHistory, `${where} expectedHistory`),
     columnstorePolicy: config.columnstorePolicy ? readColumnstorePolicy(config.columnstorePolicy, where) : null,
     reorder: config.reorder === undefined ? null : readReorderIndex(config.reorder, where),
   }
