@@ -57,7 +57,7 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "lint": "f=${OXLINT_FORMAT:-${AGENT:+agent}}; oxlint . --type-aware --format=${f:-default}",
+    "lint": "f=${OXLINT_FORMAT:-${AGENT:+agent}}; effect-tsgo oxlint . --type-aware --format=${f:-default}",
     "pretest": "pnpm run build",
     "test": "vitest run",
     "prepare": "pnpm run build",
