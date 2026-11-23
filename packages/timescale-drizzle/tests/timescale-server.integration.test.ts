@@ -33,7 +33,11 @@ const refusal = (render: () => unknown) =>
   })
 
 const workerSlots = (args: readonly string[]) =>
-  Object.fromEntries(args.map((arg) => arg.split('=') as [string, string]).map(([name, value]) => [name, value]))
+  Object.fromEntries(
+    args.filter((arg) => arg !== '-c').map((arg) => arg.split('=') as [string, string]).map((
+      [name, value],
+    ) => [name, value]),
+  )
 
 Feature("Declaring the server settings a schema's TimescaleDB jobs need")
   .withLayer(Layer.empty)
@@ -103,7 +107,9 @@ Feature("Declaring the server settings a schema's TimescaleDB jobs need")
           'server',
           () => Effect.succeed(timescaleServer({ databasesWithExtension: 2, concurrentJobs: 8 })),
         ),
-        When('the live server runs the default pool and has a pending restart on the TimescaleDB budget')(
+        When(
+          'the live server runs the default pool, has a pending restart on the TimescaleDB budget and lists its preload libraries with spaces',
+        )(
           'drift',
           (s) =>
             Effect.succeed(timescaleServerDrift(
@@ -111,6 +117,9 @@ Feature("Declaring the server settings a schema's TimescaleDB jobs need")
               Object.entries(s.server.settings).map(([name, setting]) => {
                 if (name === 'max_worker_processes') return { name, setting: '8', pending_restart: false }
                 if (name === 'timescaledb.max_background_workers') return { name, setting, pending_restart: true }
+                if (name === 'shared_preload_libraries') {
+                  return { name, setting: setting.split(',').join(', '), pending_restart: false }
+                }
                 return { name, setting, pending_restart: false }
               }),
             )),

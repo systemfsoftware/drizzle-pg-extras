@@ -62,7 +62,7 @@ export function timescaleServer(config: TimescaleServerConfig): TimescaleServer 
     reservedPostgresWorkers,
     preloadLibraries,
     settings,
-    postgresArgs: Object.entries(settings).map(([name, value]) => `${name}=${value}`),
+    postgresArgs: Object.entries(settings).flatMap(([name, value]) => ['-c', `${name}=${value}`]),
   }, 'timescaleServer')
 }
 
@@ -103,12 +103,19 @@ export const TIMESCALE_SERVER_SETTINGS_QUERY =
 
 export type LiveSetting = { readonly name: string; readonly setting: string; readonly pending_restart: boolean }
 
+const comparable = (name: string, value: string): string =>
+  name === 'shared_preload_libraries'
+    ? value.split(',').map((library) => library.trim()).filter((library) => library !== '').join(',')
+    : value
+
 export function timescaleServerDrift(server: TimescaleServer, rows: readonly LiveSetting[]): string[] {
   return Object.entries(server.settings).flatMap(([name, declared]) => {
     const live = rows.find((row) => row.name === name)
     if (!live) return [`${name}: the server does not report it; declared ${declared}`]
     if (live.pending_restart) return [`${name}: changed but waiting on a restart; declared ${declared}`]
-    if (live.setting !== declared) return [`${name}: the server runs ${live.setting}; declared ${declared}`]
+    if (comparable(name, live.setting) !== comparable(name, declared)) {
+      return [`${name}: the server runs ${live.setting}; declared ${declared}`]
+    }
     return []
   })
 }

@@ -476,13 +476,13 @@ export const server = timescaleServer({
 })
 ```
 
-`server.settings` holds `shared_preload_libraries`, `timescaledb.max_background_workers` (the schedulers plus the concurrent jobs), the three parallel-worker settings and `max_worker_processes`, derived so it covers the launcher, TimescaleDB's budget, the parallel workers and the reserved slots. `server.postgresArgs` lists them as `name=value`.
+`server.settings` holds `shared_preload_libraries`, `timescaledb.max_background_workers` (the schedulers plus the concurrent jobs), the three parallel-worker settings and `max_worker_processes`, derived so it covers the launcher, TimescaleDB's budget, the parallel workers and the reserved slots. `server.postgresArgs` lists them as postgres command-line arguments: `-c`, `name=value`, for each setting.
 
-These settings are read only when the server starts, so no migration can apply them, and `generate` never writes them. Give each entry of `postgresArgs` to the server's command line as `-c name=value`; command-line settings also override `postgresql.conf` and `ALTER SYSTEM`. Changing one takes a restart.
+These settings are read only when the server starts, so no migration can apply them, and `generate` never writes them. Append `postgresArgs` to the server's command line; command-line settings also override `postgresql.conf` and `ALTER SYSTEM`. Changing one takes a restart.
 
 `generate`, `check` and `renderIdempotent` refuse a schema that declares more than one `timescaleServer`, or that declares policies while its server allows no concurrent job. A schema that declares no server is not checked.
 
-To compare a running server with the declaration, run `TIMESCALE_SERVER_SETTINGS_QUERY` with the declared names (`Object.keys(server.settings)`) as `$1` and pass the rows to `timescaleServerDrift(server, rows)`. It lists each setting the server runs differently, does not report, or has changed but not yet applied for want of a restart.
+To compare a running server with the declaration, run `TIMESCALE_SERVER_SETTINGS_QUERY` with the declared names (`Object.keys(server.settings)`) as `$1` and pass the rows to `timescaleServerDrift(server, rows)`. It lists each setting the server runs differently, does not report, or has changed but not yet applied for want of a restart. It reads only `pg_settings`: it cannot see how many databases on the server load the extension, so a server with more such databases than `databasesWithExtension` gives each extra scheduler a job's slot without any drift.
 
 ## Continuous Aggregates
 
