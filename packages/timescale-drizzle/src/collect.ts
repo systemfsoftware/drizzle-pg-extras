@@ -17,6 +17,7 @@ import {
   type PgViewLike,
 } from './defs.js'
 import type { PgGrant } from './grant.js'
+import type { TimescaleServer } from './server.js'
 import type { PgViewDefinition } from './view.js'
 
 export function collectExtras(modules: Record<string, unknown> | readonly Record<string, unknown>[]): PgExtras {
@@ -35,6 +36,7 @@ export function collectExtras(modules: Record<string, unknown> | readonly Record
     continuousAggregates: [],
     viewDefinitions: [],
     grants: [],
+    servers: [],
   }
   const seen = new Set<unknown>()
   const list = Array.isArray(modules) ? modules : [modules]
@@ -63,6 +65,7 @@ export function defineExtras(input: {
   continuousAggregates?: readonly ContinuousAggregate[]
   viewDefinitions?: readonly PgViewDefinition[]
   grants?: readonly PgGrant[]
+  servers?: readonly TimescaleServer[]
 }): PgExtras {
   return collectExtras({
     functions: input.functions ?? [],
@@ -79,6 +82,7 @@ export function defineExtras(input: {
     continuousAggregates: input.continuousAggregates ?? [],
     viewDefinitions: input.viewDefinitions ?? [],
     grants: input.grants ?? [],
+    servers: input.servers ?? [],
   })
 }
 
@@ -141,6 +145,10 @@ function walk(value: unknown, extras: PgExtras, seen: Set<unknown>): void {
     extras.viewDefinitions.push(definition)
     walk(definition.view, extras, seen)
     for (const dependency of definition.dependsOn) walk(dependency, extras, seen)
+    return
+  }
+  if (kind === 'timescaleServer') {
+    extras.servers.push(value as TimescaleServer)
     return
   }
   if (kind === 'grant') {

@@ -10,6 +10,7 @@ import {
   writeMigration,
   type WrittenMigration,
 } from './journal.js'
+import { assertTimescaleServer } from './server.js'
 import { emptySnapshot, parseSnapshot, type Snapshot, snapshotExtras } from './snapshot.js'
 import { VERSION } from './version.js'
 
@@ -43,6 +44,7 @@ export function loadStoredSnapshot(out: string): Snapshot {
 }
 
 export function planExtras(extras: PgExtras, previous: Snapshot, casing?: Casing) {
+  assertTimescaleServer(extras)
   const next = snapshotExtras(extras, casing ? { casing } : undefined)
   const diff = diffSnapshots(previous, next)
   return { next, ...diff }
@@ -71,6 +73,7 @@ export function pendingStatements(extras: PgExtras, out: string, casing?: Casing
 }
 
 export function renderIdempotent(extras: PgExtras, options?: { casing?: Casing; breakpoints?: boolean }): string {
+  assertTimescaleServer(extras)
   const snapshot = snapshotExtras(extras, options?.casing ? { casing: options.casing } : undefined)
   return joinStatements(idempotentStatements(snapshot), options?.breakpoints ?? true, UP_HEADER)
 }

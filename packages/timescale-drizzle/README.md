@@ -458,6 +458,32 @@ export const metricsHypertable = hypertable(metrics, {
 - If a later `drizzle-kit` migration drops and recreates the parent table, the hypertable is dropped with it and must be repaired manually because `_pg-extras.json` already records the table as partitioned.
 - Passing `{ name, schema }` skips `NOT NULL`, column type, and unique-index checks.
 
+### Server Settings for Background Jobs
+
+Every policy above runs as a TimescaleDB background job, and each running job takes one of Postgres's background worker slots (`max_worker_processes`, 8 by default). The TimescaleDB launcher, one scheduler per database and parallel query workers draw from the same slots. A job that finds none free is recorded in `timescaledb_information.job_history` as `failed to start`, not as an error, so an undersized pool stops every policy without a failing statement.
+
+Declare the server the schema runs on next to its tables:
+
+```ts
+import { timescaleServer } from '@systemfsoftware/timescale-drizzle'
+
+export const server = timescaleServer({
+  databasesWithExtension: 2, // one TimescaleDB scheduler each
+  concurrentJobs: 8,
+  parallelWorkers: 0, // the default; also turns off parallel query and parallel maintenance
+  reservedPostgresWorkers: 4, // the default; Postgres's own workers, such as the logical replication launcher
+  preloadLibraries: ['timescaledb', 'pg_stat_statements'], // defaults to ['timescaledb']
+})
+```
+
+`server.settings` holds `shared_preload_libraries`, `timescaledb.max_background_workers` (the schedulers plus the concurrent jobs), the three parallel-worker settings and `max_worker_processes`, derived so it covers the launcher, TimescaleDB's budget, the parallel workers and the reserved slots. `server.postgresArgs` lists them as `name=value`.
+
+These settings are read only when the server starts, so no migration can apply them, and `generate` never writes them. Give each entry of `postgresArgs` to the server's command line as `-c name=value`; command-line settings also override `postgresql.conf` and `ALTER SYSTEM`. Changing one takes a restart.
+
+`generate`, `check` and `renderIdempotent` refuse a schema that declares more than one `timescaleServer`, or that declares policies while its server allows no concurrent job. A schema that declares no server is not checked.
+
+To compare a running server with the declaration, run `TIMESCALE_SERVER_SETTINGS_QUERY` with the declared names (`Object.keys(server.settings)`) as `$1` and pass the rows to `timescaleServerDrift(server, rows)`. It lists each setting the server runs differently, does not report, or has changed but not yet applied for want of a restart.
+
 ## Continuous Aggregates
 
 `continuousAggregate()` emits `CREATE MATERIALIZED VIEW ... WITH (timescaledb.continuous) AS <query> WITH NO DATA` so migrations do not block while materializing historical data. Declare the view stub with `pgMaterializedView(...).existing()` (or `pgView(...).existing()` if you attach `withComment`) so `drizzle-kit` does not overwrite the `timescaledb.continuous` storage option.
