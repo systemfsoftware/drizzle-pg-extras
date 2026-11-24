@@ -1,6 +1,6 @@
 {
   "name": "@systemfsoftware/timescale-drizzle",
-  "version": "0.9.0",
+  "version": "0.10.0",
   "description": "Declare Postgres functions, triggers, extensions, partitioned tables, comments, and TimescaleDB hypertables next to a Drizzle schema and generate SQL migrations.",
   "type": "module",
   "license": "Apache-2.0",
