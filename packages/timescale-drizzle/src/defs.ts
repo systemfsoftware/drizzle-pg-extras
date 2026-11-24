@@ -30,6 +30,7 @@ import { PgExtrasError } from './errors.js'
 import type { PgGrant } from './grant.js'
 import { assertIdentifier, normalizeType, quoteIdent } from './quote.js'
 import { renderSql } from './render-sql.js'
+import type { TimescaleServer } from './server.js'
 import type { PgViewDefinition } from './view.js'
 
 export const KIND = Symbol.for('timescale-drizzle.kind')
@@ -47,6 +48,7 @@ export type ExtrasKind =
   | 'continuousAggregate'
   | 'viewDefinition'
   | 'grant'
+  | 'timescaleServer'
 
 export type PgLanguage = 'plpgsql' | 'sql'
 export type PgVolatility = 'volatile' | 'stable' | 'immutable'
@@ -380,6 +382,7 @@ export type PgExtras = {
   continuousAggregates: ContinuousAggregate[]
   viewDefinitions: PgViewDefinition[]
   grants: PgGrant[]
+  servers: TimescaleServer[]
 }
 
 export function brand<T extends object, K extends ExtrasKind>(value: T, kind: K): T & { readonly [KIND]: K } {
@@ -401,7 +404,8 @@ export function extrasKind(value: unknown): ExtrasKind | null {
     kind === 'hypertable' ||
     kind === 'continuousAggregate' ||
     kind === 'viewDefinition' ||
-    kind === 'grant'
+    kind === 'grant' ||
+    kind === 'timescaleServer'
   ) {
     return kind
   }

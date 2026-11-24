@@ -89,6 +89,17 @@ export {
   dropPartitionSql,
 } from './partition-sql.js'
 export {
+  assertTimescaleServer,
+  declaredJobCount,
+  type LiveSetting,
+  TIMESCALE_SERVER_SETTINGS_QUERY,
+  type TimescaleServer,
+  timescaleServer,
+  type TimescaleServerConfig,
+  timescaleServerDrift,
+  timescaleServerProblems,
+} from './server.js'
+export {
   type CommentSnapshot,
   type ContinuousAggregateRefreshPolicySnapshot,
   type ContinuousAggregateSnapshot,
