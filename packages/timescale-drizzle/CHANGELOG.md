@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.10.0
+
+A schema can declare the server its TimescaleDB jobs run on with `timescaleServer`, which derives the worker settings (`max_worker_processes`, `timescaledb.max_background_workers`, parallel workers, `shared_preload_libraries`) as command-line arguments. `generate`, `check` and `renderIdempotent` refuse a schema whose declared policies could never start under its server, and `timescaleServerDrift` compares a running server's settings with the declaration. `PgExtras` gains a `servers` list.
+
+Rewrite the npm README: current requirements and compatibility, usage examples, and a common errors section quoting the messages the library throws. No code changes.
+
 ## 0.9.0
 
 Renamed from `@systemfsoftware/drizzle-pg-extras` to `@systemfsoftware/timescale-drizzle`, to match the repository. Install and import the new name; the old package gets no further releases.
