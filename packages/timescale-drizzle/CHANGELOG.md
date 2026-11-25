@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.0
+
+Typed query-side builders for TimescaleDB aggregates: `timeBucket` buckets a timestamp column with a structured `timeInterval` (a positive whole number and a closed unit union, never a raw interval string) and an optional origin; `first` and `last` pick a value by a typed ordering expression; `filterWhere` adds a typed `FILTER (WHERE ...)` clause to an aggregate; aggregate results retain SQL nullability for empty groups; `generateTimestampSeries` builds a `generate_series(start, stop, step)` time axis from `Date` bounds and a structured step, returning both the lateral-join table (`source`, carrying its own table and column aliases) and the qualified bucket column (`value`) for selection and ordering; and `trueCondition` supplies the typed boolean a lateral join against a set-returning function needs.
+
 ## 0.10.0
 
 A schema can declare the server its TimescaleDB jobs run on with `timescaleServer`, which derives the worker settings (`max_worker_processes`, `timescaledb.max_background_workers`, parallel workers, `shared_preload_libraries`) as command-line arguments. `generate`, `check` and `renderIdempotent` refuse a schema whose declared policies could never start under its server, and `timescaleServerDrift` compares a running server's settings with the declaration. `PgExtras` gains a `servers` list.
