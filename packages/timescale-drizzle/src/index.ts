@@ -132,6 +132,20 @@ export {
   dropTriggerSql,
 } from './statements.js'
 export {
+  filterWhere,
+  first,
+  generateTimestampSeries,
+  last,
+  type SqlData,
+  timeBucket,
+  type TimeInterval,
+  timeInterval,
+  type TimeIntervalUnit,
+  type TimestampSeries,
+  type TimestampSeriesConfig,
+  trueCondition,
+} from './timescale-query.js'
+export {
   addColumnstorePolicySql,
   addContinuousAggregateColumnstorePolicySql,
   addContinuousAggregateRefreshPoliciesSql,
