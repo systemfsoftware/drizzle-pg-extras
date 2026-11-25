@@ -55,21 +55,28 @@ function dateLiteral(value: Date, kind: string): string {
   return quoteLiteral(value.toISOString())
 }
 
-export function timeBucket<T = Date>(interval: TimeInterval, value: SQLWrapper): SQL<T> {
+export function timeBucket<T = Date>(
+  interval: TimeInterval,
+  value: SQLWrapper,
+  options?: { readonly origin?: Date },
+): SQL<T> {
   const bucket = assertTimeInterval(interval, 'timeBucket()')
-  return sql<T>`time_bucket(interval ${sql.raw(intervalValueLiteral(bucket))}, ${value})`
+  const origin = options?.origin === undefined ? undefined : dateLiteral(options.origin, 'bucket origin')
+  return origin === undefined
+    ? sql<T>`time_bucket(interval ${sql.raw(intervalValueLiteral(bucket))}, ${value})`
+    : sql<T>`time_bucket(interval ${sql.raw(intervalValueLiteral(bucket))}, ${value}, ${sql.raw(origin)})`
 }
 
-export function first<T extends SQLWrapper>(value: T, orderBy: SQLWrapper): SQL<SqlData<T>> {
-  return sql<SqlData<T>>`first(${value}, ${orderBy})`
+export function first<T extends SQLWrapper>(value: T, orderBy: SQLWrapper): SQL<SqlData<T> | null> {
+  return sql<SqlData<T> | null>`first(${value}, ${orderBy})`
 }
 
-export function last<T extends SQLWrapper>(value: T, orderBy: SQLWrapper): SQL<SqlData<T>> {
-  return sql<SqlData<T>>`last(${value}, ${orderBy})`
+export function last<T extends SQLWrapper>(value: T, orderBy: SQLWrapper): SQL<SqlData<T> | null> {
+  return sql<SqlData<T> | null>`last(${value}, ${orderBy})`
 }
 
-export function filterWhere<T>(expression: SQL<T>, condition: SQLWrapper): SQL<T> {
-  return sql<T>`${expression} FILTER (WHERE ${condition})`
+export function filterWhere<T>(expression: SQL<T>, condition: SQLWrapper): SQL<T | null> {
+  return sql<T | null>`${expression} FILTER (WHERE ${condition})`
 }
 
 export type TimestampSeriesConfig = {
@@ -86,7 +93,7 @@ export type TimestampSeriesConfig = {
  * `source` with {@link trueCondition} as the join condition.
  */
 export type TimestampSeries = {
-  readonly source: SQL<Date>
+  readonly source: SQL<unknown>
   readonly value: SQL<Date>
 }
 
@@ -100,7 +107,7 @@ export function generateTimestampSeries(
   const step = intervalValueLiteral(assertTimeInterval(config.step, 'generateTimestampSeries()'))
   const quotedAlias = quoteIdent(alias)
   return {
-    source: sql<Date>`generate_series(${sql.raw(start)}, ${sql.raw(stop)}, interval ${sql.raw(step)}) as ${
+    source: sql<unknown>`generate_series(${sql.raw(start)}, ${sql.raw(stop)}, interval ${sql.raw(step)}) as ${
       sql.raw(quotedAlias)
     }("value")`,
     value: sql<Date>`${sql.raw(quotedAlias)}."value"`,
