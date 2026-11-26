@@ -48,11 +48,12 @@ function intervalValueLiteral(interval: TimeInterval): string {
   return quoteLiteral(`${String(interval.value)} ${interval.unit}`)
 }
 
-function dateLiteral(value: Date, kind: string): string {
+function dateLiteral(value: Date, kind: string, type?: 'timestamptz'): string {
   if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
     throw new PgExtrasError(`${kind} must be a valid Date`)
   }
-  return quoteLiteral(value.toISOString())
+  const literal = quoteLiteral(value.toISOString())
+  return type === undefined ? literal : `${type} ${literal}`
 }
 
 export function timeBucket<T = Date>(
@@ -61,7 +62,7 @@ export function timeBucket<T = Date>(
   options?: { readonly origin?: Date },
 ): SQL<T> {
   const bucket = assertTimeInterval(interval, 'timeBucket()')
-  const origin = options?.origin === undefined ? undefined : dateLiteral(options.origin, 'bucket origin')
+  const origin = options?.origin === undefined ? undefined : dateLiteral(options.origin, 'bucket origin', 'timestamptz')
   return origin === undefined
     ? sql<T>`time_bucket(interval ${sql.raw(intervalValueLiteral(bucket))}, ${value})`
     : sql<T>`time_bucket(interval ${sql.raw(intervalValueLiteral(bucket))}, ${value}, ${sql.raw(origin)})`
