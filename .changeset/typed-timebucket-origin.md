@@ -2,4 +2,4 @@
 "@systemfsoftware/timescale-drizzle": patch
 ---
 
-Render the `timeBucket` origin as a typed `timestamptz` literal so PostgreSQL selects the `time_bucket(interval, timestamptz, timestamptz)` origin overload instead of resolving the untyped literal to the `timezone text` overload and failing with `time zone "..." not recognized`.
+Render the `timeBucket` origin as a typed `timestamptz` literal so the 3-argument call binds the `origin` parameter of `time_bucket(interval, timestamptz, timezone text, origin, offset)`. The untyped literal previously bound the `timezone text` parameter and failed with `time zone "..." not recognized`.
