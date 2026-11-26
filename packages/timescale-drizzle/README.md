@@ -515,6 +515,10 @@ FROM metrics GROUP BY bucket, device_id`,
 - **Recreating and removing:** Changing `query`, `source`, or `createGroupIndexes` drops and recreates the aggregate empty, and throws if a child continuous aggregate depends on it (remove the child first, migrate the parent change, then re-add the child). Removing an aggregate and its source table in the same change throws; remove the aggregate first.
 - **Commenting aggregates:** Declare the aggregate with `pgView(...).existing()` when wrapping with `withComment()`, because TimescaleDB expects `COMMENT ON VIEW` for continuous aggregates rather than `COMMENT ON MATERIALIZED VIEW`.
 
+## Structured Query Builders
+
+`timeBucket(interval, column, { origin })` renders `time_bucket(interval '<n> <unit>', <column>, <origin>)`. The origin is a typed `timestamptz` literal, so the three-argument call binds to the five-parameter `time_bucket(interval, timestamptz, timezone text, origin, offset)` function through its `origin` argument. An untyped literal instead binds the `timezone text` argument and fails with `time zone "..." not recognized`. A `timestamp` or `date` column with an origin therefore resolves to the `timestamptz` overload and returns `timestamptz` buckets anchored at UTC; in a non-UTC session a one-day bucket on a `date` column can land on the previous local day. Deriving the origin literal's type from the column's SQL type is tracked separately.
+
 ## Using with drizzle-kit push
 
 **Mechanism:** declarations reach the database only through the migration files `timescale-drizzle generate` writes, so `drizzle-kit push` needs the output of `renderIdempotent` instead.

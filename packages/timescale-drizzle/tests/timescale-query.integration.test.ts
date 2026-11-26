@@ -54,7 +54,7 @@ Feature('Structured Timescale query builders render through the pinned Postgres 
     )
 
     scenario(
-      'A one-hour bucket with a structured origin renders the origin as a timestamp literal',
+      'A one-hour bucket with a structured origin renders the origin as a timestamptz literal',
       Gherkin.Do.pipe(
         Given('a one-hour bucket with a fixed origin')('query', () =>
           Effect.succeed(
@@ -64,9 +64,9 @@ Feature('Structured Timescale query builders render through the pinned Postgres 
               }),
             ),
           )),
-        Then('the rendered query inlines the origin as a timestamp literal')((scope, expect) =>
+        Then('the rendered query inlines the origin as a timestamptz literal')((scope, expect) =>
           expect({ sql: scope.query.sql, params: scope.query.params }).toEqual({
-            sql: 'time_bucket(interval \'1 hour\', "metrics"."recorded_at", \'2024-03-01T00:00:00.000Z\')',
+            sql: 'time_bucket(interval \'1 hour\', "metrics"."recorded_at", timestamptz \'2024-03-01T00:00:00.000Z\')',
             params: [],
           })
         ),
