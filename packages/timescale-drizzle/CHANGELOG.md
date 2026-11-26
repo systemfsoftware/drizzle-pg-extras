@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.1
+
+Pin the structured query builders' rendered SQL and interval validation without changing the release.
+
+Render the `timeBucket` origin as a typed `timestamptz` literal so the 3-argument call binds the `origin` parameter of `time_bucket(interval, timestamptz, timezone text, origin, offset)`. The untyped literal previously bound the `timezone text` parameter and failed with `time zone "..." not recognized`.
+
 ## 0.11.0
 
 Typed query-side builders for TimescaleDB aggregates: `timeBucket` buckets a timestamp column with a structured `timeInterval` (a positive whole number and a closed unit union, never a raw interval string) and an optional origin; `first` and `last` pick a value by a typed ordering expression; `filterWhere` adds a typed `FILTER (WHERE ...)` clause to an aggregate; aggregate results retain SQL nullability for empty groups; `generateTimestampSeries` builds a `generate_series(start, stop, step)` time axis from `Date` bounds and a structured step, returning both the lateral-join table (`source`, carrying its own table and column aliases) and the qualified bucket column (`value`) for selection and ordering; and `trueCondition` supplies the typed boolean a lateral join against a set-returning function needs.
