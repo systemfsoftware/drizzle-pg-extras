@@ -190,7 +190,7 @@ export function makeInterval(args: RequireAtLeastOne<MakeIntervalArgs>): SQL<str
   for (const [field, keyword, castType] of MAKE_INTERVAL_FIELDS) {
     const value = args[field]
     if (value === undefined) continue
-    parts.push(sql`${sql.raw(keyword)} => ${value}::${sql.raw(castType)}`)
+    parts.push(sql`${sql.raw(keyword)} => (${value})::${sql.raw(castType)}`)
   }
   if (parts.length === 0) throw new PgExtrasError('makeInterval() needs at least one field')
   return sql<string>`make_interval(${sql.join(parts, sql.raw(', '))})`
@@ -276,7 +276,10 @@ export function onConflictUpdateChanged<TTable extends PgTable>(
   const overrideNames = Object.keys(options.set ?? {})
   const names = Array.from(
     new Set([...(explicit ?? Object.keys(columns)), ...overrideNames]),
-  ).filter((name) => !targetNames.has(columns[name]?.name))
+  ).filter((name) => {
+    const column = columns[name]
+    return column === undefined || !targetNames.has(column.name)
+  })
   const set: Record<string, SQLWrapper> = {}
   const guarded: PgColumn[] = []
   for (const name of names) {
