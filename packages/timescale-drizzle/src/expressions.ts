@@ -6,9 +6,8 @@ import { assertIdentifier, quoteIdent, quoteLiteral } from './quote.js'
 export type SqlInput<T = unknown> =
   | SQL<T>
   | SQL.Aliased<T>
-  | AnyPgColumn
   | Placeholder<string, T>
-  | SQLWrapper
+  | (AnyPgColumn & { readonly _: { readonly data: T } })
 
 export type InferSqlType<E> = E extends SQL<infer T> ? T
   : E extends SQL.Aliased<infer T> ? T
@@ -73,13 +72,17 @@ export function jsonbBuildObject<TShape extends Record<string, SqlInput<unknown>
   for (let index = 0; index < entries.length; index += JSONB_BUILD_OBJECT_MAX_PAIRS) {
     chunks.push(jsonbBuildPairs(entries.slice(index, index + JSONB_BUILD_OBJECT_MAX_PAIRS)))
   }
-  return sql<InferJsonbObject<TShape>>`${sql.join(chunks, sql.raw(' || '))}`
+  return sql<InferJsonbObject<TShape>>`(${sql.join(chunks, sql.raw(' || '))})`
 }
 
-const jsonbKey = (key: string | number) => typeof key === 'number' ? sql`${key}::int` : sql`${key}::text`
+const jsonbKey = (key: string | number) => {
+  if (typeof key !== 'number') return sql`${key}::text`
+  if (!Number.isInteger(key)) throw new PgExtrasError(`jsonb key must be an integer, got ${String(key)}`)
+  return sql`${key}::int`
+}
 
-export function jsonbGet<T = unknown>(target: SqlInput<unknown>, key: string | number): SQL<T> {
-  return sql<T>`(${target} -> ${jsonbKey(key)})`
+export function jsonbGet<T = unknown>(target: SqlInput<unknown>, key: string | number): SQL<T | null> {
+  return sql<T | null>`(${target} -> ${jsonbKey(key)})`
 }
 
 export function jsonbText(target: SqlInput<unknown>, key: string | number): SQL<string | null> {
@@ -118,8 +121,8 @@ export function jsonbArrayElementsText(
   target: SqlInput<unknown>,
   alias: string,
   columnAlias = 'value',
-): JsonbElementsRelation<string> {
-  return jsonbArrayElementsAs<string>('jsonb_array_elements_text', target, alias, columnAlias)
+): JsonbElementsRelation<string | null> {
+  return jsonbArrayElementsAs<string | null>('jsonb_array_elements_text', target, alias, columnAlias)
 }
 
 const INTERVAL_LITERAL_UNITS = [
@@ -227,7 +230,7 @@ export function epochSeconds(ts: SqlInput<Date | string>): SQL<number> {
 }
 
 export function epochMs(ts: SqlInput<Date | string>): SQL<number> {
-  return sql<number>`trunc(EXTRACT(EPOCH FROM ${ts}) * 1000)::double precision`
+  return sql<number>`(trunc(EXTRACT(EPOCH FROM ${ts}) * 1000))::double precision`
 }
 
 export interface RowNumberSpec {
@@ -239,11 +242,11 @@ export function rowNumber(spec: RowNumberSpec): SQL<number> {
   const partition = spec.partitionBy === undefined || spec.partitionBy.length === 0
     ? sql.raw('')
     : sql`PARTITION BY ${commaSeparated(spec.partitionBy)} `
-  return sql<number>`row_number() OVER (${partition}ORDER BY ${commaSeparated(spec.orderBy)})`
+  return sql<number>`(row_number() OVER (${partition}ORDER BY ${commaSeparated(spec.orderBy)}))::int`
 }
 
 export function rowKey(first: SqlInput<unknown>, ...rest: SqlInput<unknown>[]): SQL<string> {
-  return sql<string>`md5(concat_ws('|', ${commaSeparated([first, ...rest])}))`
+  return sql<string>`md5(jsonb_build_array(${commaSeparated([first, ...rest])})::text)`
 }
 
 export function excluded<TCol extends AnyPgColumn>(column: TCol): SQL<InferSqlType<TCol>> {
@@ -270,14 +273,21 @@ export function onConflictUpdateChanged<TTable extends PgTable>(
   const columns = getTableColumns(table) as Record<string, PgColumn>
   const targetNames = new Set(options.target.map((column) => column.name))
   const explicit = options.columns as readonly string[] | undefined
-  const names = explicit ?? Object.keys(columns).filter((name) => !targetNames.has(columns[name].name))
+  const overrideNames = Object.keys(options.set ?? {})
+  const names = Array.from(
+    new Set([...(explicit ?? Object.keys(columns)), ...overrideNames]),
+  ).filter((name) => !targetNames.has(columns[name]?.name))
   const set: Record<string, SQLWrapper> = {}
   const guarded: PgColumn[] = []
   for (const name of names) {
     const column = columns[name]
+    if (column === undefined) throw new PgExtrasError(`onConflictUpdateChanged() does not know the column ${name}`)
     const override = options.set?.[name as keyof TTable['_']['columns']]
     set[name] = override ?? excluded(column)
     if (override === undefined) guarded.push(column)
+  }
+  if (Object.keys(set).length === 0) {
+    throw new PgExtrasError('onConflictUpdateChanged() produced no SET columns; pass a column to update')
   }
   const setWhere = options.where ??
     (guarded.length === 0 ? undefined : tupleIsDistinctFrom(guarded.map((column) => excluded(column)), guarded))
