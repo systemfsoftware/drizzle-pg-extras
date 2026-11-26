@@ -76,12 +76,14 @@ export function jsonbBuildObject<TShape extends Record<string, SqlInput<unknown>
   return sql<InferJsonbObject<TShape>>`${sql.join(chunks, sql.raw(' || '))}`
 }
 
+const jsonbKey = (key: string | number) => typeof key === 'number' ? sql`${key}::int` : sql`${key}::text`
+
 export function jsonbGet<T = unknown>(target: SqlInput<unknown>, key: string | number): SQL<T> {
-  return sql<T>`(${target} -> ${key})`
+  return sql<T>`(${target} -> ${jsonbKey(key)})`
 }
 
 export function jsonbText(target: SqlInput<unknown>, key: string | number): SQL<string | null> {
-  return sql<string | null>`(${target} ->> ${key})`
+  return sql<string | null>`(${target} ->> ${jsonbKey(key)})`
 }
 
 export interface JsonbElementsRelation<T> {
@@ -225,7 +227,7 @@ export function epochSeconds(ts: SqlInput<Date | string>): SQL<number> {
 }
 
 export function epochMs(ts: SqlInput<Date | string>): SQL<number> {
-  return sql<number>`trunc(EXTRACT(EPOCH FROM ${ts}) * 1000)::int`
+  return sql<number>`trunc(EXTRACT(EPOCH FROM ${ts}) * 1000)::double precision`
 }
 
 export interface RowNumberSpec {
